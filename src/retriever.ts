@@ -68,7 +68,9 @@ export class ContextRetriever {
     let targetSymbol: Symbol;
 
     if (filePath) {
-      const matches = symbols.filter((s) => s.filePath === filePath);
+      // Normalize path to handle Windows vs Unix separators
+      const normalizedInput = path.normalize(filePath);
+      const matches = symbols.filter((s) => path.normalize(s.filePath) === normalizedInput);
       if (matches.length === 0) {
         return `Function "${functionName}" not found in file "${filePath}".\nFound in: ${symbols.map((s) => s.filePath).join(', ')}`;
       }
@@ -98,7 +100,9 @@ export class ContextRetriever {
     let targetSymbol: Symbol;
 
     if (filePath) {
-      const matches = symbols.filter((s) => s.filePath === filePath);
+      // Normalize path to handle Windows vs Unix separators
+      const normalizedInput = path.normalize(filePath);
+      const matches = symbols.filter((s) => path.normalize(s.filePath) === normalizedInput);
       if (matches.length === 0) {
         return `Class "${className}" not found in file "${filePath}".\nFound in: ${symbols.map((s) => s.filePath).join(', ')}`;
       }

@@ -847,7 +847,20 @@ export class RepositoryIndexer {
 
   // Public query methods
   getFileIndex(filePath: string): FileIndex | undefined {
-    return this.index.get(filePath);
+    // Normalize path to handle Windows vs Unix separators
+    const normalizedPath = path.normalize(filePath);
+    // Try normalized path first
+    let fileIndex = this.index.get(normalizedPath);
+    // If not found, search through all entries with normalized comparison
+    if (!fileIndex) {
+      for (const [key, value] of this.index.entries()) {
+        if (path.normalize(key) === normalizedPath) {
+          fileIndex = value;
+          break;
+        }
+      }
+    }
+    return fileIndex;
   }
 
   findSymbols(name: string, type?: string): Symbol[] {
