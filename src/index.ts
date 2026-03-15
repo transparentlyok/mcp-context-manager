@@ -302,10 +302,15 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       }
 
       case 'get_function': {
-        const { functionName, filePath } = args as {
-          functionName: string;
-          filePath?: string;
-        };
+        const a = args as any;
+        const functionName: string = a.functionName || a.name;
+        const filePath: string | undefined = a.filePath || a.path || a.file;
+        if (!functionName) {
+          return {
+            content: [{ type: 'text', text: 'Error: functionName is required. Provide the name of the function to retrieve.' }],
+            isError: true,
+          };
+        }
         const result = await retriever.getFunction(functionName, filePath);
         return {
           content: [
@@ -318,11 +323,16 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       }
 
       case 'get_class': {
-        const { className, methods, filePath } = args as {
-          className: string;
-          methods?: string[];
-          filePath?: string;
-        };
+        const a = args as any;
+        const className: string = a.className || a.name;
+        const methods: string[] | undefined = a.methods;
+        const filePath: string | undefined = a.filePath || a.path || a.file;
+        if (!className) {
+          return {
+            content: [{ type: 'text', text: 'Error: className is required. Provide the name of the class to retrieve.' }],
+            isError: true,
+          };
+        }
         const result = await retriever.getClass(className, methods, filePath);
         return {
           content: [
@@ -351,7 +361,14 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       }
 
       case 'get_file_summary': {
-        const { filePath } = args as { filePath: string };
+        const a = args as any;
+        const filePath: string = a.filePath || a.path || a.file;
+        if (!filePath) {
+          return {
+            content: [{ type: 'text', text: 'Error: filePath is required.' }],
+            isError: true,
+          };
+        }
         const result = await retriever.getFileSummary(filePath);
         return {
           content: [
@@ -398,10 +415,15 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       }
 
       case 'get_dependencies': {
-        const { filePath, symbol } = args as {
-          filePath: string;
-          symbol?: string;
-        };
+        const a = args as any;
+        const filePath: string = a.filePath || a.path || a.file;
+        const symbol: string | undefined = a.symbol || a.name;
+        if (!filePath) {
+          return {
+            content: [{ type: 'text', text: 'Error: filePath is required.' }],
+            isError: true,
+          };
+        }
         const result = await retriever.getDependencies(filePath, symbol);
         return {
           content: [
