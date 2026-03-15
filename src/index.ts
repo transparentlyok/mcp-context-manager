@@ -26,6 +26,35 @@ const server = new Server(
 const indexer = new RepositoryIndexer();
 const retriever = new ContextRetriever(indexer);
 
+// Token usage tracking
+interface ToolUsageEntry {
+  calls: number;
+  totalTokens: number;
+  totalChars: number;
+  avgTokensPerCall: number;
+  estimatedFullReadTokens: number; // What Read tool would have cost
+}
+
+const usageStats: Record<string, ToolUsageEntry> = {};
+let sessionStartTime = Date.now();
+
+function estimateTokens(text: string): number {
+  // ~4 chars per token is a reasonable estimate
+  return Math.ceil(text.length / 4);
+}
+
+function trackUsage(toolName: string, responseText: string, estimatedFullReadTokens: number = 0) {
+  if (!usageStats[toolName]) {
+    usageStats[toolName] = { calls: 0, totalTokens: 0, totalChars: 0, avgTokensPerCall: 0, estimatedFullReadTokens: 0 };
+  }
+  const tokens = estimateTokens(responseText);
+  usageStats[toolName].calls++;
+  usageStats[toolName].totalTokens += tokens;
+  usageStats[toolName].totalChars += responseText.length;
+  usageStats[toolName].avgTokensPerCall = Math.round(usageStats[toolName].totalTokens / usageStats[toolName].calls);
+  usageStats[toolName].estimatedFullReadTokens += estimatedFullReadTokens;
+}
+
 // Define available tools
 const tools: Tool[] = [
   {
@@ -243,6 +272,19 @@ const tools: Tool[] = [
       required: ['symbolName'],
     },
   },
+  {
+    name: 'get_usage_stats',
+    description: 'View token usage statistics for this session. Shows how many tokens each MCP tool used vs what full file reads would have cost. Use this to verify token savings.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        reset: {
+          type: 'boolean',
+          description: 'Reset usage stats after displaying. Default: false',
+        },
+      },
+    },
+  },
 ];
 
 // Handle tool listing
@@ -260,6 +302,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
   console.error(`[${timestamp}] Arguments:`, JSON.stringify(args, null, 2));
 
   try {
+    const result = await (async () => {
     switch (name) {
       case 'index_repository': {
         const path = (args as any).path || process.cwd();
@@ -474,9 +517,84 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         };
       }
 
+      case 'get_usage_stats': {
+        const resetAfter = (args as any)?.reset || false;
+        const elapsed = Math.round((Date.now() - sessionStartTime) / 1000);
+        const minutes = Math.floor(elapsed / 60);
+        const seconds = elapsed % 60;
+
+        let totalMcpTokens = 0;
+        let totalFullReadTokens = 0;
+        let totalCalls = 0;
+
+        let report = `📊 MCP Token Usage Stats (session: ${minutes}m ${seconds}s)\n`;
+        report += `${'─'.repeat(65)}\n`;
+        report += `${'Tool'.padEnd(25)} ${'Calls'.padStart(6)} ${'Tokens'.padStart(8)} ${'Avg'.padStart(6)} ${'vs Read'.padStart(10)}\n`;
+        report += `${'─'.repeat(65)}\n`;
+
+        for (const [tool, stats] of Object.entries(usageStats)) {
+          totalMcpTokens += stats.totalTokens;
+          totalFullReadTokens += stats.estimatedFullReadTokens;
+          totalCalls += stats.calls;
+
+          const savings = stats.estimatedFullReadTokens > 0
+            ? `${Math.round((1 - stats.totalTokens / stats.estimatedFullReadTokens) * 100)}% saved`
+            : 'n/a';
+
+          report += `${tool.padEnd(25)} ${String(stats.calls).padStart(6)} ${String(stats.totalTokens).padStart(8)} ${String(stats.avgTokensPerCall).padStart(6)} ${savings.padStart(10)}\n`;
+        }
+
+        report += `${'─'.repeat(65)}\n`;
+        report += `${'TOTAL'.padEnd(25)} ${String(totalCalls).padStart(6)} ${String(totalMcpTokens).padStart(8)}\n`;
+
+        if (totalFullReadTokens > 0) {
+          const overallSavings = Math.round((1 - totalMcpTokens / totalFullReadTokens) * 100);
+          report += `\n💡 Estimated full-file Read cost: ${totalFullReadTokens} tokens\n`;
+          report += `💡 MCP actual cost: ${totalMcpTokens} tokens\n`;
+          report += `💡 Savings: ${overallSavings}% (${totalFullReadTokens - totalMcpTokens} tokens saved)\n`;
+        }
+
+        if (resetAfter) {
+          for (const key of Object.keys(usageStats)) {
+            delete usageStats[key];
+          }
+          sessionStartTime = Date.now();
+          report += `\n🔄 Stats reset.`;
+        }
+
+        return {
+          content: [{ type: 'text', text: report }],
+        };
+      }
+
       default:
         throw new Error(`Unknown tool: ${name}`);
     }
+    })();
+
+    // Track token usage for all tools except get_usage_stats
+    if (name !== 'get_usage_stats' && result?.content?.[0]?.type === 'text') {
+      const responseText = (result.content[0] as any).text || '';
+      // Estimate what a full file Read would have cost
+      let fullReadEstimate = 0;
+      const a = args as any;
+      const filePath = a?.filePath || a?.path || a?.file;
+      if (filePath && name !== 'index_repository' && name !== 'clear_cache') {
+        const fileIndex = indexer.getFileIndex(filePath);
+        if (fileIndex && fileIndex.content) {
+          fullReadEstimate = estimateTokens(fileIndex.content);
+        }
+      } else if (name === 'get_relevant_context' || name === 'search_code') {
+        // For search tools, estimate cost of reading all matched files
+        const files = indexer.getAllFiles();
+        const totalFileTokens = files.reduce((sum, f) => sum + estimateTokens(f.content || ''), 0);
+        // Rough estimate: you'd read ~3-5 files to find the answer manually
+        fullReadEstimate = Math.min(totalFileTokens, estimateTokens(responseText) * 8);
+      }
+      trackUsage(name, responseText, fullReadEstimate);
+    }
+
+    return result;
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
     return {
