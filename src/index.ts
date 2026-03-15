@@ -289,7 +289,15 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       }
 
       case 'find_symbol': {
-        const { symbol, type } = args as { symbol: string; type?: string };
+        const a = args as any;
+        const symbol: string = a.symbol || a.name || a.symbolName;
+        const type: string | undefined = a.type;
+        if (!symbol) {
+          return {
+            content: [{ type: 'text', text: 'Error: symbol is required. Provide the symbol name to find.' }],
+            isError: true,
+          };
+        }
         const results = await retriever.findSymbol(symbol, type);
         return {
           content: [
@@ -345,11 +353,16 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       }
 
       case 'get_relevant_context': {
-        const { query, maxTokens } = args as {
-          query: string;
-          maxTokens?: number;
-        };
-        const result = await retriever.getRelevantContext(query, maxTokens || 2000);
+        const a = args as any;
+        const query: string = a.query || a.search || a.text || a.pattern;
+        const maxTokens: number = a.maxTokens || a.max_tokens || a.tokens || 2000;
+        if (!query) {
+          return {
+            content: [{ type: 'text', text: 'Error: query is required. Provide a natural language description of what you need.' }],
+            isError: true,
+          };
+        }
+        const result = await retriever.getRelevantContext(query, maxTokens);
         return {
           content: [
             {
@@ -381,15 +394,20 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       }
 
       case 'search_code': {
-        const { pattern, filePattern, maxResults } = args as {
-          pattern: string;
-          filePattern?: string;
-          maxResults?: number;
-        };
+        const a = args as any;
+        const pattern: string = a.pattern || a.query || a.search || a.text;
+        const filePattern: string | undefined = a.filePattern || a.glob || a.fileGlob;
+        const maxResults: number = a.maxResults || a.limit || a.max || 10;
+        if (!pattern) {
+          return {
+            content: [{ type: 'text', text: 'Error: pattern is required. Provide a text or regex pattern to search for.' }],
+            isError: true,
+          };
+        }
         const results = await retriever.searchCode(
           pattern,
           filePattern,
-          maxResults || 10
+          maxResults
         );
         return {
           content: [
@@ -436,11 +454,16 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       }
 
       case 'find_similar': {
-        const { symbolName, limit } = args as {
-          symbolName: string;
-          limit?: number;
-        };
-        const result = await retriever.findSimilarSymbols(symbolName, limit || 5);
+        const a = args as any;
+        const symbolName: string = a.symbolName || a.symbol || a.name;
+        const limit: number = a.limit || a.max || a.maxResults || 5;
+        if (!symbolName) {
+          return {
+            content: [{ type: 'text', text: 'Error: symbolName is required.' }],
+            isError: true,
+          };
+        }
+        const result = await retriever.findSimilarSymbols(symbolName, limit);
         return {
           content: [
             {
