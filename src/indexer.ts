@@ -40,6 +40,8 @@ export class RepositoryIndexer {
   private ignorePatterns: string[] = [];
   private static readonly CACHE_VERSION = '1.0.0';
   private static readonly CACHE_DIR = '.mcp-cache';
+  private skippedLargeCount: number = 0;
+  private skippedUnsupportedCount: number = 0;
 
   constructor() {
     this.ignorePatterns = [];
@@ -63,6 +65,8 @@ export class RepositoryIndexer {
     // Clear existing index
     this.index.clear();
     this.symbolMap.clear();
+    this.skippedLargeCount = 0;
+    this.skippedUnsupportedCount = 0;
 
     // Load ignore patterns
     await this.loadIgnorePatterns();
@@ -327,6 +331,7 @@ export class RepositoryIndexer {
     ];
 
     if (!supportedExtensions.includes(ext)) {
+      this.skippedUnsupportedCount++;
       return;
     }
 
@@ -356,6 +361,7 @@ export class RepositoryIndexer {
     // Skip files larger than 5MB (likely generated/minified)
     const MAX_FILE_SIZE = 5 * 1024 * 1024;
     if (stats.size > MAX_FILE_SIZE) {
+      this.skippedLargeCount++;
       return;
     }
 
@@ -1495,6 +1501,8 @@ export class RepositoryIndexer {
     return {
       totalFiles: this.index.size,
       totalSymbols: this.getTotalSymbols(),
+      skippedLarge: this.skippedLargeCount,
+      skippedUnsupported: this.skippedUnsupportedCount,
     };
   }
 
