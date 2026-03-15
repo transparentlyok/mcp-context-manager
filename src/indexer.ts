@@ -43,6 +43,8 @@ export class RepositoryIndexer {
   private static readonly CACHE_DIR = '.mcp-cache';
   private skippedLargeCount: number = 0;
   private skippedUnsupportedCount: number = 0;
+  private cachedContentSize: number = 0;
+  private static readonly MAX_CONTENT_CACHE_SIZE = 100 * 1024 * 1024; // 100MB max for content cache
 
   constructor() {
     this.ignorePatterns = [];
@@ -68,16 +70,13 @@ export class RepositoryIndexer {
     this.symbolMap.clear();
     this.skippedLargeCount = 0;
     this.skippedUnsupportedCount = 0;
+    this.cachedContentSize = 0;
 
     // Load ignore patterns
     await this.loadIgnorePatterns();
 
-    // Collect all files first
-    const allFiles = await this.collectAllFiles(rootPath);
-    console.error(`📁 Found ${allFiles.length} files to index`);
-
-    // Index files in parallel batches
-    await this.indexFilesParallel(allFiles);
+    // Stream files and index in batches (memory-efficient for large repos)
+    await this.indexFilesStreaming(rootPath);
 
     const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
     console.error(`✅ Indexed ${this.index.size} files with ${this.getTotalSymbols()} symbols in ${elapsed}s`);
@@ -220,6 +219,7 @@ export class RepositoryIndexer {
   private async indexFilesParallel(files: string[]): Promise<void> {
     const BATCH_SIZE = 100; // Process 100 files at a time
     const CONCURRENCY = 10; // 10 concurrent operations
+    const MAX_HEAP_MB = 1536; // Stop if heap exceeds 1.5GB (leave headroom before 2GB limit)
 
     let processed = 0;
     let lastReportTime = Date.now();
@@ -237,15 +237,125 @@ export class RepositoryIndexer {
         await Promise.all(chunk.map(file => this.indexFile(file)));
         processed += chunk.length;
 
-        // Report progress every 2 seconds
+        // Check memory usage and report progress every 2 seconds
         const now = Date.now();
         if (now - lastReportTime > 2000) {
+          const memUsage = process.memoryUsage();
+          const heapUsedMB = Math.round(memUsage.heapUsed / 1024 / 1024);
           const percent = ((processed / files.length) * 100).toFixed(1);
-          console.error(`📊 Progress: ${processed}/${files.length} files (${percent}%) - ${this.getTotalSymbols()} symbols found`);
+
+          console.error(`📊 Progress: ${processed}/${files.length} files (${percent}%) - ${this.getTotalSymbols()} symbols | 💾 ${heapUsedMB}MB heap`);
+
+          // Memory safety check
+          if (heapUsedMB > MAX_HEAP_MB) {
+            console.error(`⚠️  Memory limit reached (${heapUsedMB}MB > ${MAX_HEAP_MB}MB)`);
+            console.error(`⚠️  Stopping indexing to prevent crash. Indexed ${processed}/${files.length} files.`);
+            console.error(`💡 Tip: Use index_git_changes to index only modified files, or increase Node.js heap with --max-old-space-size`);
+            break;
+          }
+
           lastReportTime = now;
         }
       }
+
+      // Force garbage collection between batches if available
+      if (global.gc) {
+        global.gc();
+      }
     }
+  }
+
+  /**
+   * Stream files from directory and index in batches (memory-efficient)
+   * Instead of collecting ALL files first, we process them as we discover them
+   */
+  private async indexFilesStreaming(dirPath: string): Promise<void> {
+    const BATCH_SIZE = 100;
+    const CONCURRENCY = 10;
+    const MAX_HEAP_MB = 1536;
+
+    let batch: string[] = [];
+    let processed = 0;
+    let totalFiles = 0;
+    let lastReportTime = Date.now();
+
+    const processBatch = async () => {
+      if (batch.length === 0) return;
+
+      const currentBatch = [...batch];
+      batch = [];
+
+      // Process in chunks with concurrency limit
+      for (let i = 0; i < currentBatch.length; i += CONCURRENCY) {
+        const chunk = currentBatch.slice(i, Math.min(i + CONCURRENCY, currentBatch.length));
+        await Promise.all(chunk.map(file => this.indexFile(file)));
+        processed += chunk.length;
+
+        // Memory monitoring and progress reporting
+        const now = Date.now();
+        if (now - lastReportTime > 2000) {
+          const memUsage = process.memoryUsage();
+          const heapUsedMB = Math.round(memUsage.heapUsed / 1024 / 1024);
+          const percent = totalFiles > 0 ? ((processed / totalFiles) * 100).toFixed(1) : '?';
+
+          console.error(`📊 Progress: ${processed}${totalFiles > 0 ? '/' + totalFiles : ''} files (${percent}%) - ${this.getTotalSymbols()} symbols | 💾 ${heapUsedMB}MB heap`);
+
+          if (heapUsedMB > MAX_HEAP_MB) {
+            console.error(`⚠️  Memory limit reached (${heapUsedMB}MB > ${MAX_HEAP_MB}MB)`);
+            console.error(`⚠️  Stopping indexing to prevent crash.`);
+            throw new Error('MEMORY_LIMIT_REACHED');
+          }
+
+          lastReportTime = now;
+        }
+      }
+
+      // GC between batches
+      if (global.gc) global.gc();
+    };
+
+    const walkDir = async (dir: string): Promise<void> => {
+      try {
+        const entries = await fs.readdir(dir, { withFileTypes: true });
+
+        for (const entry of entries) {
+          const fullPath = path.join(dir, entry.name);
+          const relativePath = path.relative(this.rootPath, fullPath);
+
+          if (this.shouldIgnore(relativePath)) {
+            continue;
+          }
+
+          if (entry.isDirectory()) {
+            await walkDir(fullPath);
+          } else if (entry.isFile()) {
+            batch.push(fullPath);
+            totalFiles++;
+
+            // Process batch when it reaches size limit
+            if (batch.length >= BATCH_SIZE) {
+              await processBatch();
+            }
+          }
+        }
+      } catch (error) {
+        // Ignore permission errors
+      }
+    };
+
+    console.error(`🔍 Streaming file indexing from: ${dirPath}`);
+
+    try {
+      await walkDir(dirPath);
+      // Process remaining files
+      await processBatch();
+    } catch (error) {
+      if ((error as Error).message !== 'MEMORY_LIMIT_REACHED') {
+        throw error;
+      }
+    }
+
+    console.error(`📁 Indexed ${processed} files with ${this.getTotalSymbols()} symbols`);
   }
 
   private async loadIgnorePatterns(): Promise<void> {
@@ -471,6 +581,18 @@ export class RepositoryIndexer {
     const lines = content.split('\n');
     const language = this.detectLanguage(ext);
 
+    // Smart content caching: only cache content if:
+    // 1. File is reasonably small (< 512KB)
+    // 2. We haven't exceeded our total cache size limit (100MB)
+    // This prevents memory bloat on large repos while still enabling text search
+    let shouldCacheContent = false;
+    const MAX_SINGLE_FILE_CACHE = 512 * 1024; // 512KB per file
+    if (stats.size < MAX_SINGLE_FILE_CACHE &&
+        this.cachedContentSize + stats.size < RepositoryIndexer.MAX_CONTENT_CACHE_SIZE) {
+      shouldCacheContent = true;
+      this.cachedContentSize += stats.size;
+    }
+
     const fileIndex: FileIndex = {
       path: path.relative(this.rootPath, filePath),
       symbols: [],
@@ -479,8 +601,7 @@ export class RepositoryIndexer {
       size: stats.size,
       lines: lines.length,
       language,
-      // Only store content for text search - can be disabled for memory optimization
-      content: stats.size < 1024 * 1024 ? content : undefined, // Only cache files < 1MB
+      content: shouldCacheContent ? content : undefined,
     };
 
     // Parse file based on language

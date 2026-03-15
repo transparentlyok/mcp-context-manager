@@ -1,6 +1,6 @@
 {
   "name": "claude-mcp-context",
-  "version": "3.0.0",
+  "version": "3.1.0",
   "description": "Blazing-fast semantic code toolkit for Claude - Smart context, git-aware indexing, symbol editing, find references. 15+ languages, NO LSP needed, 100% free",
   "type": "module",
   "main": "dist/index.js",
