@@ -44,9 +44,26 @@ function estimateTokens(text: string): number {
   return Math.ceil(text.length / 4);
 }
 
+function normalizePath(filePath: string): string {
+  // Normalize to forward slashes, unescape double backslashes,
+  // strip absolute path prefixes to get relative path
+  let normalized = filePath
+    .replace(/\\\\/g, '/')  // double backslash (JSON escaped) → forward slash
+    .replace(/\\/g, '/')    // single backslash → forward slash
+    .trim();
+
+  // Strip absolute path prefix if present (e.g., C:\Users\...\express\lib\app.js → lib/app.js)
+  // Find the repo-relative part by looking for common root indicators
+  const rootPath = indexer.getRootPath().replace(/\\/g, '/');
+  if (normalized.startsWith(rootPath)) {
+    normalized = normalized.substring(rootPath.length);
+    if (normalized.startsWith('/')) normalized = normalized.substring(1);
+  }
+
+  return normalized;
+}
+
 function extractFilePathsFromResponse(responseText: string): string[] {
-  // Extract file paths mentioned in MCP responses
-  // Matches patterns like "File: lib\app.js", "lib/app.js:42", "src\index.ts:10"
   const patterns = [
     /File:\s*([^\n:]+?)(?::\d+)?$/gm,           // "File: lib\app.js:42"
     /^\s+([a-zA-Z][\w/\\.-]+\.\w+):\d+/gm,      // "   lib/app.js:42"
@@ -60,7 +77,7 @@ function extractFilePathsFromResponse(responseText: string): string[] {
     while ((match = pattern.exec(responseText)) !== null) {
       const filePath = match[1].trim();
       if (filePath && !filePath.includes(' ') && filePath.includes('.')) {
-        files.add(filePath);
+        files.add(normalizePath(filePath));
       }
     }
   }
@@ -648,8 +665,11 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       // Also include the explicitly requested file path if provided
       const a = args as any;
       const requestedFile = a?.filePath || a?.file;
-      if (requestedFile && !referencedFiles.includes(requestedFile)) {
-        referencedFiles.push(requestedFile);
+      if (requestedFile) {
+        const normalizedRequested = normalizePath(requestedFile);
+        if (!referencedFiles.includes(normalizedRequested)) {
+          referencedFiles.push(normalizedRequested);
+        }
       }
 
       trackUsage(name, responseText, referencedFiles);
