@@ -2,7 +2,7 @@
 
 > **The smartest code search for Claude.** Reduces token usage by 70-90% with BM25 ranking, fuzzy matching, and natural language queries.
 
-[![npm version](https://badge.fury.io/js/mcp-context-manager.svg)](https://www.npmjs.com/package/mcp-context-manager)
+[![npm version](https://badge.fury.io/js/claude-mcp-context.svg)](https://www.npmjs.com/package/claude-mcp-context)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 ## What is this?
@@ -59,7 +59,7 @@ If automatic setup doesn't work or you're using Claude Desktop, add to your conf
 {
   "mcpServers": {
     "context-manager": {
-      "command": "mcp-context-manager"
+      "command": "claude-mcp-context"
     }
   }
 }
@@ -70,7 +70,7 @@ If automatic setup doesn't work or you're using Claude Desktop, add to your conf
 {
   "mcpServers": {
     "context-manager": {
-      "command": "mcp-context-manager"
+      "command": "claude-mcp-context"
     }
   }
 }
@@ -325,7 +325,7 @@ MIT License - see [LICENSE](LICENSE) file.
 ## Links
 
 - [GitHub](https://github.com/transparentlyok/mcp-context-manager)
-- [npm](https://www.npmjs.com/package/mcp-context-manager)
+- [npm](https://www.npmjs.com/package/claude-mcp-context)
 - [Issues](https://github.com/transparentlyok/mcp-context-manager/issues)
 - [Model Context Protocol](https://modelcontextprotocol.io)
 
