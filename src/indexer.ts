@@ -21,6 +21,7 @@ export interface FileIndex {
   size: number;
   lines: number;
   language: string;
+  content?: string; // Raw file content for full-text search
 }
 
 interface CacheMetadata {
@@ -189,6 +190,7 @@ export class RepositoryIndexer {
         size: stats.size,
         lines: lines.length,
         language,
+        content: content,
       };
 
       // Parse file based on language

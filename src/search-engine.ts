@@ -368,8 +368,8 @@ export class CodeSearchEngine {
       const queryTokens = this.tokenize(pattern);
 
       for (const file of files) {
-        // Build full code from all symbols
-        const fullCode = file.symbols.map(s => s.code).join('\n\n');
+        // Use raw file content if available, fall back to symbol code
+        const fullCode = file.content || file.symbols.map(s => s.code).join('\n\n');
         const lines = fullCode.split('\n');
 
         let match;

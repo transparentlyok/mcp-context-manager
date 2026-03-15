@@ -57,7 +57,7 @@ const tools: Tool[] = [
         },
         maxTokens: {
           type: 'number',
-          description: 'Maximum tokens to return (approximate). Default: 2000',
+          description: 'Maximum tokens to return (approximate). Default: 4000',
         },
       },
       required: ['query'],
@@ -135,7 +135,7 @@ const tools: Tool[] = [
         },
         maxTokens: {
           type: 'number',
-          description: 'Maximum tokens to return (approximate). Default: 2000',
+          description: 'Maximum tokens to return (approximate). Default: 4000',
         },
       },
       required: ['query'],
@@ -355,7 +355,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       case 'get_relevant_context': {
         const a = args as any;
         const query: string = a.query || a.search || a.text || a.pattern;
-        const maxTokens: number = a.maxTokens || a.max_tokens || a.tokens || 2000;
+        const maxTokens: number = a.maxTokens || a.max_tokens || a.tokens || 4000;
         if (!query) {
           return {
             content: [{ type: 'text', text: 'Error: query is required. Provide a natural language description of what you need.' }],
