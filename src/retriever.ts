@@ -474,14 +474,18 @@ export class ContextRetriever {
   }
 
   private matchGlob(filePath: string, pattern: string): boolean {
+    // Normalize both paths to forward slashes for consistent matching
+    const normalizedPath = filePath.replace(/\\/g, '/');
+    const normalizedPattern = pattern.replace(/\\/g, '/');
+
     // Simple glob matching (supports * and **)
-    const regexPattern = pattern
+    const regexPattern = normalizedPattern
       .replace(/\./g, '\\.')
       .replace(/\*\*/g, '.*')
       .replace(/\*/g, '[^/]*');
 
     const regex = new RegExp(`^${regexPattern}$`);
-    return regex.test(filePath);
+    return regex.test(normalizedPath);
   }
 
   private async buildDirectoryTree(
