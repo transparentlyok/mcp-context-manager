@@ -125,7 +125,7 @@ function trackUsage(toolName: string, responseText: string, referencedFiles: str
 const tools: Tool[] = [
   {
     name: 'index_repository',
-    description: '🔧 REQUIRED FIRST STEP: Index or re-index the repository to enable all context-manager tools. Uses cached index if files haven\'t changed. ALWAYS call this when starting work on a repository or if files have changed significantly. Fast (<2s for most repos).',
+    description: '🔧 REQUIRED FIRST STEP: Index or re-index the repository to enable all context-manager tools. Uses cached index if files haven\'t changed. ALWAYS call this when starting work on a repository or if files have changed significantly. Automatically skips build artifacts (bin, obj, node_modules, dist, etc.) and large generated files. Large repos (100k+ LOC) may take 30-120s on first index; subsequent calls use the cache.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -374,11 +374,16 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         const path = (args as any).path || process.cwd();
         const forceReindex = (args as any).forceReindex || false;
         await indexer.indexRepository(path, forceReindex);
+        const stats = indexer.getStats();
+        const skippedParts: string[] = [];
+        if (stats.skippedLarge > 0) skippedParts.push(`${stats.skippedLarge} too large (>512KB)`);
+        if (stats.skippedUnsupported > 0) skippedParts.push(`${stats.skippedUnsupported} unsupported type`);
+        const skippedLine = skippedParts.length > 0 ? `\nSkipped: ${skippedParts.join(', ')}` : '';
         return {
           content: [
             {
               type: 'text',
-              text: `Repository indexed successfully.\nFiles: ${indexer.getStats().totalFiles}\nSymbols: ${indexer.getStats().totalSymbols}`,
+              text: `Repository indexed successfully.\nFiles: ${stats.totalFiles}\nSymbols: ${stats.totalSymbols}${skippedLine}`,
             },
           ],
         };
