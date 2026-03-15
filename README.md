@@ -33,14 +33,28 @@ An MCP (Model Context Protocol) server that gives Claude **superhuman code navig
 ### Installation
 
 ```bash
-npm install -g mcp-context-manager
+npm install -g claude-mcp-context
 ```
 
-### Configure Claude
+**Automatic Setup (Claude Code CLI):**
 
-Add to your Claude config file:
+The package automatically detects and configures Claude Code. After installation, run:
 
-**Claude Desktop** (`~/Library/Application Support/Claude/claude_desktop_config.json` on macOS):
+```bash
+mcp-context-setup
+```
+
+This will:
+1. ✅ Build the server (if needed)
+2. ✅ Verify server functionality
+3. ✅ Register with Claude Code automatically
+4. ✅ Confirm registration
+
+**Manual Configuration (Claude Desktop or troubleshooting):**
+
+If automatic setup doesn't work or you're using Claude Desktop, add to your config file:
+
+**Claude Desktop** (`~/Library/Application Support/Claude/claude_desktop_config.json`):
 ```json
 {
   "mcpServers": {
@@ -60,6 +74,11 @@ Add to your Claude config file:
     }
   }
 }
+```
+
+**Verify Installation:**
+```bash
+claude mcp list  # Should show "context-manager"
 ```
 
 ### Usage
@@ -241,9 +260,11 @@ No configuration needed!
 ## Troubleshooting
 
 **MCP server not showing up?**
+- Run `mcp-context-setup` to re-register
 - Check config file path is correct
 - Use absolute paths (not relative)
 - Restart Claude after config changes
+- Verify with: `claude mcp list`
 
 **No symbols found after indexing?**
 - Verify file extensions are supported

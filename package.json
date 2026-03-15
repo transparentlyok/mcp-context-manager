@@ -1,11 +1,12 @@
 {
-  "name": "mcp-context-manager",
-  "version": "2.0.0",
+  "name": "claude-mcp-context",
+  "version": "2.0.1",
   "description": "The smartest code search for Claude - BM25 ranking, fuzzy matching, and 70-90% token savings",
   "type": "module",
   "main": "dist/index.js",
   "bin": {
-    "mcp-context-manager": "./dist/index.js"
+    "mcp-context-manager": "./dist/index.js",
+    "mcp-context-setup": "./install.cjs"
   },
   "files": [
     "dist/",
@@ -45,12 +46,12 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/transparentlyok/mcp-context-manager"
+    "url": "https://github.com/nyrilol/mcp-context-manager"
   },
   "bugs": {
-    "url": "https://github.com/transparentlyok/mcp-context-manager/issues"
+    "url": "https://github.com/nyrilol/mcp-context-manager/issues"
   },
-  "homepage": "https://github.com/transparentlyok/mcp-context-manager#readme",
+  "homepage": "https://github.com/nyrilol/mcp-context-manager#readme",
   "engines": {
     "node": ">=18.0.0"
   },

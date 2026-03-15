@@ -8,6 +8,14 @@ const ROOT = __dirname;
 const DIST_ENTRY = path.join(ROOT, 'dist', 'index.js');
 const SERVER_NAME = 'context-manager';
 
+// Detect if running as postinstall in global mode
+const isGlobalInstall = process.env.npm_config_global === 'true';
+if (isGlobalInstall && !process.argv.includes('--force')) {
+  console.log('[install] Global install detected.');
+  console.log('[install] Run "mcp-context-setup" after installation to configure Claude.');
+  process.exit(0);
+}
+
 function run(cmd, opts = {}) {
   try {
     return execSync(cmd, { cwd: ROOT, stdio: 'pipe', ...opts }).toString().trim();
@@ -19,24 +27,29 @@ function run(cmd, opts = {}) {
 function log(msg) { console.log(`[install] ${msg}`); }
 function err(msg) { console.error(`[install] ERROR: ${msg}`); }
 
-// 1. Install deps if needed
-if (!fs.existsSync(path.join(ROOT, 'node_modules'))) {
-  log('Installing dependencies...');
-  execSync('npm install', { cwd: ROOT, stdio: 'inherit' });
-}
-
-// 2. Build
-log('Building...');
-try {
-  execSync('npx tsc', { cwd: ROOT, stdio: 'inherit' });
-} catch {
-  err('TypeScript build failed');
-  process.exit(1);
-}
-
+// 1. Check if already built (npm published package)
 if (!fs.existsSync(DIST_ENTRY)) {
-  err('Build output not found at ' + DIST_ENTRY);
-  process.exit(1);
+  // Building from source (development mode)
+  log('Building from source...');
+
+  if (!fs.existsSync(path.join(ROOT, 'node_modules'))) {
+    log('Installing dependencies...');
+    execSync('npm install', { cwd: ROOT, stdio: 'inherit' });
+  }
+
+  try {
+    execSync('npx tsc', { cwd: ROOT, stdio: 'inherit' });
+  } catch {
+    err('TypeScript build failed');
+    process.exit(1);
+  }
+
+  if (!fs.existsSync(DIST_ENTRY)) {
+    err('Build output not found at ' + DIST_ENTRY);
+    process.exit(1);
+  }
+} else {
+  log('Using pre-built package');
 }
 
 // 3. Verify the server starts
