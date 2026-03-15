@@ -1,7 +1,7 @@
 {
   "name": "claude-mcp-context",
-  "version": "2.2.0",
-  "description": "Blazing-fast code search for Claude - handles massive repos (300k+ LOC), 15+ languages, parallel indexing, 70-90% token savings",
+  "version": "3.0.0",
+  "description": "Blazing-fast semantic code toolkit for Claude - Smart context, git-aware indexing, symbol editing, find references. 15+ languages, NO LSP needed, 100% free",
   "type": "module",
   "main": "dist/index.js",
   "bin": {

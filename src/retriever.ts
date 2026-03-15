@@ -2,6 +2,8 @@ import * as fs from 'fs/promises';
 import * as path from 'path';
 import { RepositoryIndexer, Symbol, FileIndex } from './indexer.js';
 import { CodeSearchEngine, SearchMatch, SearchOptions } from './search-engine.js';
+import { DependencyTracker } from './dependency-tracker.js';
+import { SymbolEditor } from './symbol-editor.js';
 
 interface SearchResult {
   filePath: string;
@@ -11,7 +13,20 @@ interface SearchResult {
 }
 
 export class ContextRetriever {
-  constructor(private indexer: RepositoryIndexer) {}
+  private depTracker: DependencyTracker;
+  private symbolEditor: SymbolEditor;
+
+  constructor(private indexer: RepositoryIndexer) {
+    this.depTracker = new DependencyTracker(indexer);
+    this.symbolEditor = new SymbolEditor(indexer);
+  }
+
+  /**
+   * Build dependency graph (call after indexing)
+   */
+  buildDependencyGraph(): void {
+    this.depTracker.buildGraph();
+  }
 
   async findSymbol(symbolName: string, type?: string): Promise<any> {
     const symbols = this.indexer.findSymbols(symbolName, type);
@@ -555,5 +570,177 @@ export class ContextRetriever {
     return [...new Set(identifiers)].filter((id) => {
       return imports.some((imp) => imp.includes(id));
     });
+  }
+
+  /**
+   * 🚀 FEATURE 1: Smart Context Expansion
+   * Get a function/class with smart dependency context
+   */
+  async getFunctionWithSmartContext(
+    functionName: string,
+    filePath?: string,
+    options?: { includeTypes?: boolean; includeDeps?: boolean }
+  ): Promise<string> {
+    const opts = { includeTypes: true, includeDeps: true, ...options };
+    const symbols = this.indexer.findSymbols(functionName, 'function');
+
+    if (symbols.length === 0) {
+      return `Function "${functionName}" not found in index.`;
+    }
+
+    let targetSymbol: Symbol;
+    if (filePath) {
+      const matches = symbols.filter((s) => s.filePath === filePath);
+      if (matches.length === 0) {
+        return `Function "${functionName}" not found in file "${filePath}".`;
+      }
+      targetSymbol = matches[0];
+    } else {
+      if (symbols.length > 1) {
+        const locations = symbols.map((s) => `  - ${s.filePath}:${s.line}`).join('\n');
+        return `Multiple functions named "${functionName}" found:\n${locations}\n\nPlease specify filePath.`;
+      }
+      targetSymbol = symbols[0];
+    }
+
+    const smartContext = this.depTracker.getSmartContext(targetSymbol);
+
+    let result = `📦 Smart Context for: ${targetSymbol.name}\n`;
+    result += `📍 Location: ${targetSymbol.filePath}:${targetSymbol.line}\n`;
+    result += `💾 Token estimate: ${smartContext.tokenEstimate}\n`;
+    result += '─'.repeat(70) + '\n\n';
+
+    // Primary symbol (full code)
+    result += `🔧 PRIMARY FUNCTION:\n\n`;
+    result += `${targetSymbol.code}\n\n`;
+
+    // Dependencies (signatures only for efficiency)
+    if (opts.includeDeps && smartContext.dependencies.length > 0) {
+      result += '─'.repeat(70) + '\n';
+      result += `📚 DEPENDENCIES (${smartContext.dependencies.length}):\n\n`;
+
+      for (const { symbol: dep, signatureOnly } of smartContext.dependencies) {
+        const icon = this.getTypeIcon(dep.type);
+        result += `${icon} ${dep.name} (${dep.filePath}:${dep.line})\n`;
+
+        if (signatureOnly && dep.signature) {
+          result += `${dep.signature}\n\n`;
+        } else {
+          result += `${dep.code.substring(0, 300)}${dep.code.length > 300 ? '...' : ''}\n\n`;
+        }
+      }
+    }
+
+    result += '─'.repeat(70) + '\n';
+    result += `💡 Token savings vs full file read: ~${Math.round((1 - smartContext.tokenEstimate / 2000) * 100)}%\n`;
+
+    return result;
+  }
+
+  /**
+   * 🚀 FEATURE 3: Dependency-Aware Context
+   * Visualize and return dependency tree for a symbol
+   */
+  async getDependencyContext(
+    symbolName: string,
+    options?: { maxDepth?: number; visualize?: boolean }
+  ): Promise<string> {
+    const opts = { maxDepth: 2, visualize: true, ...options };
+    const symbols = this.indexer.findSymbols(symbolName);
+
+    if (symbols.length === 0) {
+      return `Symbol "${symbolName}" not found in index.`;
+    }
+
+    const targetSymbol = symbols[0];
+    let result = '';
+
+    if (opts.visualize) {
+      result += this.depTracker.visualizeDependencyTree(targetSymbol, opts.maxDepth);
+      result += '\n\n';
+    }
+
+    const dependencies = this.depTracker.getDependencies(targetSymbol, opts.maxDepth);
+
+    result += '─'.repeat(70) + '\n';
+    result += `📊 Dependency Summary:\n`;
+    result += `  🎯 Target: ${targetSymbol.name}\n`;
+    result += `  🔗 Dependencies found: ${dependencies.length}\n`;
+    result += `  📏 Search depth: ${opts.maxDepth}\n`;
+    result += '─'.repeat(70) + '\n\n';
+
+    // Group by file
+    const byFile = new Map<string, Symbol[]>();
+    for (const dep of dependencies) {
+      if (!byFile.has(dep.filePath)) {
+        byFile.set(dep.filePath, []);
+      }
+      byFile.get(dep.filePath)!.push(dep);
+    }
+
+    result += `📁 Dependencies by file:\n\n`;
+    for (const [file, deps] of byFile.entries()) {
+      result += `  ${file}:\n`;
+      for (const dep of deps) {
+        result += `    ${this.getTypeIcon(dep.type)} ${dep.name} (line ${dep.line})\n`;
+      }
+      result += '\n';
+    }
+
+    return result;
+  }
+
+  private getTypeIcon(type: string): string {
+    const icons: Record<string, string> = {
+      function: '🔧',
+      class: '📦',
+      interface: '📋',
+      type: '🏷️',
+      variable: '📌',
+      export: '📤',
+    };
+    return icons[type] || '📄';
+  }
+
+  // ========================================
+  // Symbol Editor Methods (Serena-inspired)
+  // ========================================
+
+  /**
+   * Find all references to a symbol
+   */
+  async findSymbolReferences(symbolName: string): Promise<string> {
+    return this.symbolEditor.getSymbolUsages(symbolName);
+  }
+
+  /**
+   * Insert code after a symbol
+   */
+  async insertAfterSymbol(symbolName: string, code: string, filePath?: string): Promise<string> {
+    const result = await this.symbolEditor.insertAfterSymbol(symbolName, code, filePath);
+    return this.symbolEditor.formatEditResult(result);
+  }
+
+  /**
+   * Replace a symbol with new code
+   */
+  async replaceSymbol(symbolName: string, newCode: string, filePath?: string): Promise<string> {
+    const result = await this.symbolEditor.replaceSymbol(symbolName, newCode, filePath);
+    return this.symbolEditor.formatEditResult(result);
+  }
+
+  /**
+   * Delete a symbol
+   */
+  async deleteSymbol(symbolName: string, filePath?: string): Promise<string> {
+    const result = await this.symbolEditor.deleteSymbol(symbolName, filePath);
+    return this.symbolEditor.formatEditResult(result);
+  }
+
+  /**
+   * Get related symbols
+   */
+  async getRelatedSymbols(symbolName: string): Promise<string> {
+    return this.symbolEditor.getRelatedSymbols(symbolName);
   }
 }

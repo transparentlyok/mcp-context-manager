@@ -13,7 +13,7 @@ import { ContextRetriever } from './retriever.js';
 const server = new Server(
   {
     name: 'mcp-context-manager',
-    version: '1.0.0',
+    version: '3.0.0',
   },
   {
     capabilities: {
@@ -351,6 +351,177 @@ const tools: Tool[] = [
       },
     },
   },
+  {
+    name: 'index_git_changes',
+    description: '🚀 NEW: Git-aware incremental indexing. Only indexes files changed since a git ref (branch/commit). MUCH FASTER than full re-index for large repos. Use this when working on feature branches or after pulling changes. Examples: "--since main", "--days 7", "--uncommitted".',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        path: {
+          type: 'string',
+          description: 'Path to repository root. Default: process.cwd()',
+        },
+        since: {
+          type: 'string',
+          description: 'Git ref to compare against (e.g., "main", "develop", "HEAD~5"). Default: main branch',
+        },
+        days: {
+          type: 'number',
+          description: 'Index files changed in last N days',
+        },
+        uncommitted: {
+          type: 'boolean',
+          description: 'Index only uncommitted changes. Default: false',
+        },
+      },
+    },
+  },
+  {
+    name: 'get_function_with_context',
+    description: '🚀 NEW: Smart context expansion. Get a function WITH its type definitions and immediate dependencies (signatures only). Saves 80-90% tokens vs reading all dependency files. Perfect for understanding code flow without full file reads.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        functionName: {
+          type: 'string',
+          description: 'The name of the function to retrieve',
+        },
+        filePath: {
+          type: 'string',
+          description: 'Optional: specific file path if known',
+        },
+        includeTypes: {
+          type: 'boolean',
+          description: 'Include type definitions. Default: true',
+        },
+        includeDeps: {
+          type: 'boolean',
+          description: 'Include immediate dependencies. Default: true',
+        },
+      },
+      required: ['functionName'],
+    },
+  },
+  {
+    name: 'get_dependency_tree',
+    description: '🚀 NEW: Dependency-aware context. Visualize and retrieve dependency tree for a symbol. Shows what code depends on what. Use this to understand code architecture and flow. Returns visual tree + grouped dependencies.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        symbolName: {
+          type: 'string',
+          description: 'Symbol name to analyze dependencies for',
+        },
+        maxDepth: {
+          type: 'number',
+          description: 'Maximum depth to traverse. Default: 2',
+        },
+        visualize: {
+          type: 'boolean',
+          description: 'Include visual tree diagram. Default: true',
+        },
+      },
+      required: ['symbolName'],
+    },
+  },
+  {
+    name: 'build_dependency_graph',
+    description: '🚀 NEW: Build dependency graph for the entire codebase. Call this once after indexing to enable smart context features. Required for get_function_with_context and get_dependency_tree to work.',
+    inputSchema: {
+      type: 'object',
+      properties: {},
+    },
+  },
+  {
+    name: 'find_symbol_references',
+    description: '🔍 NEW: Find all places where a symbol is used (Serena-inspired). Shows usages across all files with context. Uses regex-based search (no LSP required). Perfect for "who calls this function?" questions. FREE & FAST.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        symbolName: {
+          type: 'string',
+          description: 'Symbol name to find references for',
+        },
+      },
+      required: ['symbolName'],
+    },
+  },
+  {
+    name: 'insert_after_symbol',
+    description: '✏️ NEW: Insert code after a symbol (Serena-inspired). Symbol-level editing without reading full files. Precise insertion at exact location. Auto-detects symbol end. FREE & NO LSP NEEDED.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        symbolName: {
+          type: 'string',
+          description: 'Symbol to insert after',
+        },
+        code: {
+          type: 'string',
+          description: 'Code to insert',
+        },
+        filePath: {
+          type: 'string',
+          description: 'Optional: specific file if multiple symbols with same name',
+        },
+      },
+      required: ['symbolName', 'code'],
+    },
+  },
+  {
+    name: 'replace_symbol',
+    description: '✏️ NEW: Replace a symbol with new code (Serena-inspired). Surgical precision editing. Replaces entire symbol definition. Perfect for refactoring. FREE & SIMPLE.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        symbolName: {
+          type: 'string',
+          description: 'Symbol to replace',
+        },
+        newCode: {
+          type: 'string',
+          description: 'New code to replace with',
+        },
+        filePath: {
+          type: 'string',
+          description: 'Optional: specific file if multiple symbols',
+        },
+      },
+      required: ['symbolName', 'newCode'],
+    },
+  },
+  {
+    name: 'delete_symbol',
+    description: '🗑️ NEW: Delete a symbol (Serena-inspired). Remove function/class/etc cleanly. Symbol-level deletion. Use for cleanup and refactoring. FREE & FAST.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        symbolName: {
+          type: 'string',
+          description: 'Symbol to delete',
+        },
+        filePath: {
+          type: 'string',
+          description: 'Optional: specific file if multiple symbols',
+        },
+      },
+      required: ['symbolName'],
+    },
+  },
+  {
+    name: 'get_related_symbols',
+    description: '🔗 NEW: Find symbols related to a given symbol. Discovers related code by file proximity, name similarity, and usage. Helps navigate unfamiliar codebases. FREE & SMART.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        symbolName: {
+          type: 'string',
+          description: 'Symbol to find related symbols for',
+        },
+      },
+      required: ['symbolName'],
+    },
+  },
 ];
 
 // Handle tool listing
@@ -652,6 +823,175 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
         return {
           content: [{ type: 'text', text: report }],
+        };
+      }
+
+      case 'index_git_changes': {
+        const a = args as any;
+        const path = a.path || process.cwd();
+        const since = a.since;
+        const days = a.days;
+        const uncommitted = a.uncommitted || false;
+
+        await indexer.indexGitChanges(path, { since, days, uncommitted });
+        const stats = indexer.getStats();
+
+        return {
+          content: [
+            {
+              type: 'text',
+              text: `Git-aware incremental index complete.\nFiles: ${stats.totalFiles}\nSymbols: ${stats.totalSymbols}`,
+            },
+          ],
+        };
+      }
+
+      case 'get_function_with_context': {
+        const a = args as any;
+        const functionName = a.functionName || a.name;
+        const filePath = a.filePath || a.path || a.file;
+        const includeTypes = a.includeTypes !== false;
+        const includeDeps = a.includeDeps !== false;
+
+        if (!functionName) {
+          return {
+            content: [{ type: 'text', text: 'Error: functionName is required.' }],
+            isError: true,
+          };
+        }
+
+        const result = await retriever.getFunctionWithSmartContext(functionName, filePath, {
+          includeTypes,
+          includeDeps,
+        });
+
+        return {
+          content: [{ type: 'text', text: result }],
+        };
+      }
+
+      case 'get_dependency_tree': {
+        const a = args as any;
+        const symbolName = a.symbolName || a.symbol || a.name;
+        const maxDepth = a.maxDepth || a.depth || 2;
+        const visualize = a.visualize !== false;
+
+        if (!symbolName) {
+          return {
+            content: [{ type: 'text', text: 'Error: symbolName is required.' }],
+            isError: true,
+          };
+        }
+
+        const result = await retriever.getDependencyContext(symbolName, {
+          maxDepth,
+          visualize,
+        });
+
+        return {
+          content: [{ type: 'text', text: result }],
+        };
+      }
+
+      case 'build_dependency_graph': {
+        retriever.buildDependencyGraph();
+        return {
+          content: [
+            {
+              type: 'text',
+              text: 'Dependency graph built successfully. Smart context features are now enabled.',
+            },
+          ],
+        };
+      }
+
+      case 'find_symbol_references': {
+        const a = args as any;
+        const symbolName = a.symbolName || a.symbol || a.name;
+
+        if (!symbolName) {
+          return {
+            content: [{ type: 'text', text: 'Error: symbolName is required.' }],
+            isError: true,
+          };
+        }
+
+        const result = await retriever.findSymbolReferences(symbolName);
+        return {
+          content: [{ type: 'text', text: result }],
+        };
+      }
+
+      case 'insert_after_symbol': {
+        const a = args as any;
+        const symbolName = a.symbolName || a.symbol || a.name;
+        const code = a.code || a.codeToInsert;
+        const filePath = a.filePath || a.file;
+
+        if (!symbolName || !code) {
+          return {
+            content: [{ type: 'text', text: 'Error: symbolName and code are required.' }],
+            isError: true,
+          };
+        }
+
+        const result = await retriever.insertAfterSymbol(symbolName, code, filePath);
+        return {
+          content: [{ type: 'text', text: result }],
+        };
+      }
+
+      case 'replace_symbol': {
+        const a = args as any;
+        const symbolName = a.symbolName || a.symbol || a.name;
+        const newCode = a.newCode || a.code;
+        const filePath = a.filePath || a.file;
+
+        if (!symbolName || !newCode) {
+          return {
+            content: [{ type: 'text', text: 'Error: symbolName and newCode are required.' }],
+            isError: true,
+          };
+        }
+
+        const result = await retriever.replaceSymbol(symbolName, newCode, filePath);
+        return {
+          content: [{ type: 'text', text: result }],
+        };
+      }
+
+      case 'delete_symbol': {
+        const a = args as any;
+        const symbolName = a.symbolName || a.symbol || a.name;
+        const filePath = a.filePath || a.file;
+
+        if (!symbolName) {
+          return {
+            content: [{ type: 'text', text: 'Error: symbolName is required.' }],
+            isError: true,
+          };
+        }
+
+        const result = await retriever.deleteSymbol(symbolName, filePath);
+        return {
+          content: [{ type: 'text', text: result }],
+        };
+      }
+
+      case 'get_related_symbols': {
+        const a = args as any;
+        const symbolName = a.symbolName || a.symbol || a.name;
+
+        if (!symbolName) {
+          return {
+            content: [{ type: 'text', text: 'Error: symbolName is required.' }],
+            isError: true,
+          };
+        }
+
+        const result = await retriever.getRelatedSymbols(symbolName);
+        return {
+          content: [{ type: 'text', text: result }],
         };
       }
 

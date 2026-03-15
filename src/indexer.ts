@@ -1,6 +1,7 @@
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import * as crypto from 'crypto';
+import { GitUtils, GitChangedFiles } from './git-utils.js';
 
 export interface Symbol {
   name: string;
@@ -83,6 +84,107 @@ export class RepositoryIndexer {
 
     // Save to cache
     await this.saveToCache(rootPath);
+  }
+
+  /**
+   * 🚀 FEATURE 2: Git-Aware Indexing
+   * Index only files changed since a git ref
+   */
+  async indexGitChanges(
+    rootPath: string,
+    options?: { since?: string; days?: number; uncommitted?: boolean }
+  ): Promise<void> {
+    this.rootPath = rootPath;
+
+    // Check if this is a git repository
+    const isGit = await GitUtils.isGitRepository(rootPath);
+    if (!isGit) {
+      console.error('⚠️  Not a git repository. Falling back to full index.');
+      return this.indexRepository(rootPath, false);
+    }
+
+    const startTime = Date.now();
+    const currentBranch = await GitUtils.getCurrentBranch(rootPath);
+
+    // Load existing cache first
+    const hadCache = await this.loadFromCache(rootPath);
+    if (!hadCache) {
+      console.error('⚠️  No cache found. Running full index first...');
+      return this.indexRepository(rootPath, false);
+    }
+
+    // Get changed files
+    let changedFiles: GitChangedFiles;
+    if (options?.uncommitted) {
+      changedFiles = await GitUtils.getUncommittedChanges(rootPath);
+    } else if (options?.days) {
+      changedFiles = await GitUtils.getRecentlyChangedFiles(rootPath, options.days);
+    } else if (options?.since) {
+      changedFiles = await GitUtils.getChangedFilesSince(rootPath, options.since);
+    } else {
+      // Default: changes vs main branch
+      const mainBranch = await GitUtils.getMainBranch(rootPath);
+      changedFiles = await GitUtils.getChangedFilesSince(rootPath, mainBranch);
+    }
+
+    // Show visual feedback
+    console.error(GitUtils.visualizeIndexScope(changedFiles, currentBranch));
+
+    if (changedFiles.total === 0) {
+      console.error('✅ No changes to index!');
+      return;
+    }
+
+    // Load ignore patterns
+    await this.loadIgnorePatterns();
+
+    // Re-index only changed files
+    const filesToIndex = [...changedFiles.modified, ...changedFiles.added]
+      .map(f => path.join(rootPath, f))
+      .filter(f => !this.shouldIgnore(path.relative(rootPath, f)));
+
+    console.error(`🔄 Re-indexing ${filesToIndex.length} changed files...`);
+
+    // Remove deleted files from index
+    for (const deletedFile of changedFiles.deleted) {
+      this.removeFileFromIndex(deletedFile);
+    }
+
+    // Index changed files
+    await this.indexFilesParallel(filesToIndex);
+
+    const elapsed = ((Date.now() - startTime) / 1000).toFixed(2);
+    console.error(`✅ Incremental index complete in ${elapsed}s`);
+    console.error(`   📝 Modified: ${changedFiles.modified.length}`);
+    console.error(`   ➕ Added: ${changedFiles.added.length}`);
+    console.error(`   ➖ Deleted: ${changedFiles.deleted.length}`);
+    console.error(`   📊 Total indexed: ${this.index.size} files, ${this.getTotalSymbols()} symbols`);
+
+    // Update cache
+    await this.saveToCache(rootPath);
+  }
+
+  /**
+   * Remove a file from the index
+   */
+  private removeFileFromIndex(filePath: string): void {
+    const fileIndex = this.index.get(filePath);
+    if (fileIndex) {
+      // Remove symbols from symbol map
+      for (const symbol of fileIndex.symbols) {
+        const symbols = this.symbolMap.get(symbol.name);
+        if (symbols) {
+          const filtered = symbols.filter(s => s.filePath !== filePath);
+          if (filtered.length === 0) {
+            this.symbolMap.delete(symbol.name);
+          } else {
+            this.symbolMap.set(symbol.name, filtered);
+          }
+        }
+      }
+      // Remove file from index
+      this.index.delete(filePath);
+    }
   }
 
   private async collectAllFiles(dirPath: string): Promise<string[]> {
