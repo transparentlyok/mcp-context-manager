@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "context-manager": {
+      "command": "node",
+      "args": [
+        "/absolute/path/to/mcp-context-manager/dist/index.js"
+      ],
+      "disabled": false
+    }
+  }
+}

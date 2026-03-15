@@ -1,0 +1,44 @@
+# Source files (only ship compiled dist/)
+src/
+*.ts
+!*.d.ts
+tsconfig.json
+
+# Development files
+.vscode/
+.idea/
+*.swp
+*.swo
+CLAUDE.md
+CONTRIBUTING.md
+
+# Test files
+test/
+*.test.js
+*.test.ts
+coverage/
+.nyc_output/
+
+# Git files
+.git/
+.gitignore
+.gitattributes
+
+# CI/CD
+.github/
+
+# Cache
+.mcp-cache/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Environment
+.env
+.env.*
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*

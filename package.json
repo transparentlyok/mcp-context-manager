@@ -1,0 +1,65 @@
+{
+  "name": "mcp-context-manager",
+  "version": "2.0.0",
+  "description": "The smartest code search for Claude - BM25 ranking, fuzzy matching, and 70-90% token savings",
+  "type": "module",
+  "main": "dist/index.js",
+  "bin": {
+    "mcp-context-manager": "./dist/index.js"
+  },
+  "files": [
+    "dist/",
+    "install.cjs",
+    "mcp_config.example.json",
+    "README.md",
+    "LICENSE",
+    "CHANGELOG.md"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "watch": "tsc --watch",
+    "dev": "tsx src/index.ts",
+    "start": "node dist/index.js",
+    "prepublishOnly": "npm run build",
+    "prepack": "npm run build",
+    "postinstall": "node install.cjs || exit 0"
+  },
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "claude",
+    "ai",
+    "code-analysis",
+    "token-optimization",
+    "context-manager",
+    "typescript",
+    "javascript",
+    "python",
+    "go",
+    "rust",
+    "lua",
+    "cpp",
+    "csharp"
+  ],
+  "author": "transparentlyok",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/transparentlyok/mcp-context-manager"
+  },
+  "bugs": {
+    "url": "https://github.com/transparentlyok/mcp-context-manager/issues"
+  },
+  "homepage": "https://github.com/transparentlyok/mcp-context-manager#readme",
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.4",
+    "@types/node": "^22.10.2",
+    "typescript": "^5.7.2"
+  },
+  "devDependencies": {
+    "tsx": "^4.19.2"
+  }
+}
