@@ -40,6 +40,12 @@ export class RepositoryIndexer {
   private ignorePatterns: string[] = [];
   private static readonly CACHE_VERSION = '1.0.0';
   private static readonly CACHE_DIR = '.mcp-cache';
+  private static readonly MAX_FILE_SIZE = 512 * 1024; // 512 KB — skip huge generated files
+
+  // Indexing progress stats
+  private indexedCount: number = 0;
+  private skippedLargeCount: number = 0;
+  private skippedUnsupportedCount: number = 0;
 
   constructor() {
     this.ignorePatterns = [];
@@ -60,14 +66,18 @@ export class RepositoryIndexer {
     // Clear existing index
     this.index.clear();
     this.symbolMap.clear();
+    this.indexedCount = 0;
+    this.skippedLargeCount = 0;
+    this.skippedUnsupportedCount = 0;
 
     // Load ignore patterns
     await this.loadIgnorePatterns();
 
     // Index all files
+    console.error(`Starting indexing of ${rootPath} ...`);
     await this.indexDirectory(rootPath);
 
-    console.error(`Indexed ${this.index.size} files with ${this.getTotalSymbols()} symbols`);
+    console.error(`Indexed ${this.index.size} files with ${this.getTotalSymbols()} symbols (skipped: ${this.skippedLargeCount} too large, ${this.skippedUnsupportedCount} unsupported type)`);
 
     // Save to cache
     await this.saveToCache(rootPath);
@@ -78,8 +88,8 @@ export class RepositoryIndexer {
 
     // Default patterns
     this.ignorePatterns = [
+      // Node / JS
       'node_modules',
-      '.git',
       'dist',
       'build',
       'coverage',
@@ -92,6 +102,31 @@ export class RepositoryIndexer {
       'package-lock.json',
       'yarn.lock',
       'pnpm-lock.yaml',
+      // VCS
+      '.git',
+      // .NET / C# build artifacts — CRITICAL for large solutions
+      'bin',          // compiled assemblies (every project has this)
+      'obj',          // intermediate build files (every project has this)
+      '.vs',          // Visual Studio local workspace state
+      'packages',     // NuGet packages (legacy packages folder restore)
+      'TestResults',  // dotnet test / VSTest output
+      'publish',      // dotnet publish output
+      'artifacts',    // common CI/CD staging directory
+      '.nuget',       // per-repo NuGet cache
+      // C# auto-generated source files
+      '*.designer.cs',   // Windows Forms / WPF designer code
+      '*.g.cs',          // Roslyn source generators
+      '*.g.i.cs',        // Roslyn incremental source generators
+      // Python
+      '__pycache__',
+      '.venv',
+      'venv',
+      '*.pyc',
+      // Java / Maven / Gradle
+      'target',
+      '.gradle',
+      // General
+      'vendor',
     ];
 
     try {
@@ -152,6 +187,10 @@ export class RepositoryIndexer {
           await this.indexDirectory(fullPath);
         } else if (entry.isFile()) {
           await this.indexFile(fullPath);
+          this.indexedCount++;
+          if (this.indexedCount % 100 === 0) {
+            console.error(`  ... ${this.indexedCount} files processed so far`);
+          }
         }
       }
     } catch (error) {
@@ -173,12 +212,21 @@ export class RepositoryIndexer {
     ];
 
     if (!supportedExtensions.includes(ext)) {
+      this.skippedUnsupportedCount++;
       return;
     }
 
     try {
-      const content = await fs.readFile(filePath, 'utf-8');
       const stats = await fs.stat(filePath);
+
+      // Skip files that are too large — they're almost certainly generated/minified
+      if (stats.size > RepositoryIndexer.MAX_FILE_SIZE) {
+        this.skippedLargeCount++;
+        console.error(`Skipping large file (${Math.round(stats.size / 1024)}KB): ${path.relative(this.rootPath, filePath)}`);
+        return;
+      }
+
+      const content = await fs.readFile(filePath, 'utf-8');
       const lines = content.split('\n');
       const language = this.detectLanguage(ext);
 
@@ -894,6 +942,8 @@ export class RepositoryIndexer {
     return {
       totalFiles: this.index.size,
       totalSymbols: this.getTotalSymbols(),
+      skippedLarge: this.skippedLargeCount,
+      skippedUnsupported: this.skippedUnsupportedCount,
     };
   }
 
