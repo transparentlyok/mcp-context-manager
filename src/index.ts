@@ -32,27 +32,76 @@ interface ToolUsageEntry {
   totalTokens: number;
   totalChars: number;
   avgTokensPerCall: number;
-  estimatedFullReadTokens: number; // What Read tool would have cost
+  estimatedFullReadTokens: number;
+  filesReferenced: Set<string>; // Track unique files touched by this tool
 }
 
 const usageStats: Record<string, ToolUsageEntry> = {};
+const allFilesReferenced = new Set<string>(); // Global dedup across all tools
 let sessionStartTime = Date.now();
 
 function estimateTokens(text: string): number {
-  // ~4 chars per token is a reasonable estimate
   return Math.ceil(text.length / 4);
 }
 
-function trackUsage(toolName: string, responseText: string, estimatedFullReadTokens: number = 0) {
-  if (!usageStats[toolName]) {
-    usageStats[toolName] = { calls: 0, totalTokens: 0, totalChars: 0, avgTokensPerCall: 0, estimatedFullReadTokens: 0 };
+function extractFilePathsFromResponse(responseText: string): string[] {
+  // Extract file paths mentioned in MCP responses
+  // Matches patterns like "File: lib\app.js", "lib/app.js:42", "src\index.ts:10"
+  const patterns = [
+    /File:\s*([^\n:]+?)(?::\d+)?$/gm,           // "File: lib\app.js:42"
+    /^\s+([a-zA-Z][\w/\\.-]+\.\w+):\d+/gm,      // "   lib/app.js:42"
+    /\"filePath\":\s*\"([^"]+)\"/g,               // JSON "filePath": "lib/app.js"
+    /\"file\":\s*\"([^"]+)\"/g,                   // JSON "file": "lib/app.js"
+  ];
+
+  const files = new Set<string>();
+  for (const pattern of patterns) {
+    let match;
+    while ((match = pattern.exec(responseText)) !== null) {
+      const filePath = match[1].trim();
+      if (filePath && !filePath.includes(' ') && filePath.includes('.')) {
+        files.add(filePath);
+      }
+    }
   }
+  return Array.from(files);
+}
+
+function getFileTokenCount(filePath: string): number {
+  const fileIndex = indexer.getFileIndex(filePath);
+  if (fileIndex?.content) {
+    return estimateTokens(fileIndex.content);
+  }
+  // Fallback: estimate from file size if no content
+  if (fileIndex) {
+    return Math.ceil(fileIndex.size / 4);
+  }
+  return 0;
+}
+
+function trackUsage(toolName: string, responseText: string, referencedFiles: string[] = []) {
+  if (!usageStats[toolName]) {
+    usageStats[toolName] = {
+      calls: 0, totalTokens: 0, totalChars: 0,
+      avgTokensPerCall: 0, estimatedFullReadTokens: 0,
+      filesReferenced: new Set(),
+    };
+  }
+  const entry = usageStats[toolName];
   const tokens = estimateTokens(responseText);
-  usageStats[toolName].calls++;
-  usageStats[toolName].totalTokens += tokens;
-  usageStats[toolName].totalChars += responseText.length;
-  usageStats[toolName].avgTokensPerCall = Math.round(usageStats[toolName].totalTokens / usageStats[toolName].calls);
-  usageStats[toolName].estimatedFullReadTokens += estimatedFullReadTokens;
+  entry.calls++;
+  entry.totalTokens += tokens;
+  entry.totalChars += responseText.length;
+  entry.avgTokensPerCall = Math.round(entry.totalTokens / entry.calls);
+
+  // Track unique files and their full-read cost (only count each file once globally)
+  for (const file of referencedFiles) {
+    if (!allFilesReferenced.has(file)) {
+      allFilesReferenced.add(file);
+      entry.filesReferenced.add(file);
+      entry.estimatedFullReadTokens += getFileTokenCount(file);
+    }
+  }
 }
 
 // Define available tools
@@ -526,38 +575,55 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         let totalMcpTokens = 0;
         let totalFullReadTokens = 0;
         let totalCalls = 0;
+        let totalFiles = 0;
 
         let report = `📊 MCP Token Usage Stats (session: ${minutes}m ${seconds}s)\n`;
-        report += `${'─'.repeat(65)}\n`;
-        report += `${'Tool'.padEnd(25)} ${'Calls'.padStart(6)} ${'Tokens'.padStart(8)} ${'Avg'.padStart(6)} ${'vs Read'.padStart(10)}\n`;
-        report += `${'─'.repeat(65)}\n`;
+        report += `${'─'.repeat(75)}\n`;
+        report += `${'Tool'.padEnd(25)} ${'Calls'.padStart(6)} ${'Tokens'.padStart(8)} ${'Avg'.padStart(6)} ${'Files'.padStart(6)} ${'vs Read'.padStart(12)}\n`;
+        report += `${'─'.repeat(75)}\n`;
 
         for (const [tool, stats] of Object.entries(usageStats)) {
           totalMcpTokens += stats.totalTokens;
           totalFullReadTokens += stats.estimatedFullReadTokens;
           totalCalls += stats.calls;
+          const fileCount = stats.filesReferenced.size;
+          totalFiles += fileCount;
 
           const savings = stats.estimatedFullReadTokens > 0
             ? `${Math.round((1 - stats.totalTokens / stats.estimatedFullReadTokens) * 100)}% saved`
             : 'n/a';
 
-          report += `${tool.padEnd(25)} ${String(stats.calls).padStart(6)} ${String(stats.totalTokens).padStart(8)} ${String(stats.avgTokensPerCall).padStart(6)} ${savings.padStart(10)}\n`;
+          report += `${tool.padEnd(25)} ${String(stats.calls).padStart(6)} ${String(stats.totalTokens).padStart(8)} ${String(stats.avgTokensPerCall).padStart(6)} ${String(fileCount).padStart(6)} ${savings.padStart(12)}\n`;
         }
 
-        report += `${'─'.repeat(65)}\n`;
-        report += `${'TOTAL'.padEnd(25)} ${String(totalCalls).padStart(6)} ${String(totalMcpTokens).padStart(8)}\n`;
+        report += `${'─'.repeat(75)}\n`;
+        report += `${'TOTAL'.padEnd(25)} ${String(totalCalls).padStart(6)} ${String(totalMcpTokens).padStart(8)} ${''.padStart(6)} ${String(allFilesReferenced.size).padStart(6)}\n`;
+
+        report += `\n📁 Unique files touched: ${allFilesReferenced.size}\n`;
 
         if (totalFullReadTokens > 0) {
           const overallSavings = Math.round((1 - totalMcpTokens / totalFullReadTokens) * 100);
-          report += `\n💡 Estimated full-file Read cost: ${totalFullReadTokens} tokens\n`;
-          report += `💡 MCP actual cost: ${totalMcpTokens} tokens\n`;
-          report += `💡 Savings: ${overallSavings}% (${totalFullReadTokens - totalMcpTokens} tokens saved)\n`;
+          report += `\n📖 If you Read those ${allFilesReferenced.size} files fully: ~${totalFullReadTokens.toLocaleString()} tokens\n`;
+          report += `🔍 MCP returned only relevant parts: ~${totalMcpTokens.toLocaleString()} tokens\n`;
+          report += `💡 Saved: ~${(totalFullReadTokens - totalMcpTokens).toLocaleString()} tokens (${overallSavings}%)\n`;
+        }
+
+        // List the actual files that were referenced
+        if (allFilesReferenced.size > 0 && allFilesReferenced.size <= 30) {
+          report += `\n📂 Files referenced:\n`;
+          for (const file of allFilesReferenced) {
+            const tokens = getFileTokenCount(file);
+            report += `   ${file} (${tokens > 0 ? tokens.toLocaleString() + ' tokens' : 'unknown size'})\n`;
+          }
+        } else if (allFilesReferenced.size > 30) {
+          report += `\n📂 Files referenced: ${allFilesReferenced.size} files (too many to list)\n`;
         }
 
         if (resetAfter) {
           for (const key of Object.keys(usageStats)) {
             delete usageStats[key];
           }
+          allFilesReferenced.clear();
           sessionStartTime = Date.now();
           report += `\n🔄 Stats reset.`;
         }
@@ -572,26 +638,21 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     }
     })();
 
-    // Track token usage for all tools except get_usage_stats
-    if (name !== 'get_usage_stats' && result?.content?.[0]?.type === 'text') {
+    // Track token usage for all tools except get_usage_stats and index_repository
+    if (name !== 'get_usage_stats' && name !== 'index_repository' && name !== 'clear_cache' && result?.content?.[0]?.type === 'text') {
       const responseText = (result.content[0] as any).text || '';
-      // Estimate what a full file Read would have cost
-      let fullReadEstimate = 0;
+
+      // Extract actual file paths referenced in the response
+      const referencedFiles = extractFilePathsFromResponse(responseText);
+
+      // Also include the explicitly requested file path if provided
       const a = args as any;
-      const filePath = a?.filePath || a?.path || a?.file;
-      if (filePath && name !== 'index_repository' && name !== 'clear_cache') {
-        const fileIndex = indexer.getFileIndex(filePath);
-        if (fileIndex && fileIndex.content) {
-          fullReadEstimate = estimateTokens(fileIndex.content);
-        }
-      } else if (name === 'get_relevant_context' || name === 'search_code') {
-        // For search tools, estimate cost of reading all matched files
-        const files = indexer.getAllFiles();
-        const totalFileTokens = files.reduce((sum, f) => sum + estimateTokens(f.content || ''), 0);
-        // Rough estimate: you'd read ~3-5 files to find the answer manually
-        fullReadEstimate = Math.min(totalFileTokens, estimateTokens(responseText) * 8);
+      const requestedFile = a?.filePath || a?.file;
+      if (requestedFile && !referencedFiles.includes(requestedFile)) {
+        referencedFiles.push(requestedFile);
       }
-      trackUsage(name, responseText, fullReadEstimate);
+
+      trackUsage(name, responseText, referencedFiles);
     }
 
     return result;

@@ -1,6 +1,6 @@
 {
   "name": "claude-mcp-context",
-  "version": "2.1.0",
+  "version": "2.1.1",
   "description": "The smartest code search for Claude - BM25 ranking, fuzzy matching, and 70-90% token savings",
   "type": "module",
   "main": "dist/index.js",
