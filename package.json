@@ -1,7 +1,7 @@
 {
   "name": "claude-mcp-context",
-  "version": "2.1.2",
-  "description": "The smartest code search for Claude - BM25 ranking, fuzzy matching, and 70-90% token savings",
+  "version": "2.2.0",
+  "description": "Blazing-fast code search for Claude - handles massive repos (300k+ LOC), 15+ languages, parallel indexing, 70-90% token savings",
   "type": "module",
   "main": "dist/index.js",
   "bin": {
@@ -40,7 +40,18 @@
     "rust",
     "lua",
     "cpp",
-    "csharp"
+    "csharp",
+    "dotnet",
+    "java",
+    "ruby",
+    "php",
+    "swift",
+    "kotlin",
+    "scala",
+    "elixir",
+    "dart",
+    "monorepo",
+    "large-codebase"
   ],
   "author": "transparentlyok",
   "license": "MIT",

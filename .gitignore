@@ -1,9 +1,57 @@
 # Dependencies
 node_modules/
+vendor/
+packages/
 
 # Build outputs
 dist/
+build/
+out/
+target/
+bin/
+obj/
 *.tsbuildinfo
+
+# .NET
+[Dd]ebug/
+[Rr]elease/
+x64/
+x86/
+*.suo
+*.user
+*.sln.docstates
+.vs/
+TestResults/
+*.nupkg
+_ReSharper*/
+*.DotSettings.user
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.tox/
+venv/
+.venv/
+env/
+
+# Java
+*.class
+*.jar
+*.war
+*.ear
+
+# Go
+vendor/
+
+# Rust
+Cargo.lock
+
+# Ruby
+.bundle/
 
 # Logs
 *.log
@@ -19,10 +67,12 @@ yarn-error.log*
 # OS
 .DS_Store
 Thumbs.db
+desktop.ini
 
 # IDE
 .vscode/
 .idea/
+.claude/
 *.swp
 *.swo
 *~
@@ -30,11 +80,20 @@ Thumbs.db
 # Testing
 coverage/
 .nyc_output/
+*.lcov
 
 # Cache
 .mcp-cache/
 *.cache
+.cache/
+.parcel-cache/
+.turbo/
 
 # Temporary files
 *.tmp
 .temp/
+
+# Test directories
+cloned/
+test-*.mjs
+test-*.js

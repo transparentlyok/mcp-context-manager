@@ -52,10 +52,13 @@ export class RepositoryIndexer {
     if (!forceReindex) {
       const loaded = await this.loadFromCache(rootPath);
       if (loaded) {
-        console.error(`Loaded from cache: ${this.index.size} files with ${this.getTotalSymbols()} symbols`);
+        console.error(`✅ Loaded from cache: ${this.index.size} files with ${this.getTotalSymbols()} symbols`);
         return;
       }
     }
+
+    const startTime = Date.now();
+    console.error(`🔍 Starting repository indexing: ${rootPath}`);
 
     // Clear existing index
     this.index.clear();
@@ -64,34 +67,198 @@ export class RepositoryIndexer {
     // Load ignore patterns
     await this.loadIgnorePatterns();
 
-    // Index all files
-    await this.indexDirectory(rootPath);
+    // Collect all files first
+    const allFiles = await this.collectAllFiles(rootPath);
+    console.error(`📁 Found ${allFiles.length} files to index`);
 
-    console.error(`Indexed ${this.index.size} files with ${this.getTotalSymbols()} symbols`);
+    // Index files in parallel batches
+    await this.indexFilesParallel(allFiles);
+
+    const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+    console.error(`✅ Indexed ${this.index.size} files with ${this.getTotalSymbols()} symbols in ${elapsed}s`);
 
     // Save to cache
     await this.saveToCache(rootPath);
   }
 
+  private async collectAllFiles(dirPath: string): Promise<string[]> {
+    const files: string[] = [];
+
+    const collect = async (dir: string) => {
+      try {
+        const entries = await fs.readdir(dir, { withFileTypes: true });
+
+        for (const entry of entries) {
+          const fullPath = path.join(dir, entry.name);
+          const relativePath = path.relative(this.rootPath, fullPath);
+
+          if (this.shouldIgnore(relativePath)) {
+            continue;
+          }
+
+          if (entry.isDirectory()) {
+            await collect(fullPath);
+          } else if (entry.isFile()) {
+            files.push(fullPath);
+          }
+        }
+      } catch (error) {
+        // Ignore permission errors
+      }
+    };
+
+    await collect(dirPath);
+    return files;
+  }
+
+  private async indexFilesParallel(files: string[]): Promise<void> {
+    const BATCH_SIZE = 100; // Process 100 files at a time
+    const CONCURRENCY = 10; // 10 concurrent operations
+
+    let processed = 0;
+    let lastReportTime = Date.now();
+
+    for (let i = 0; i < files.length; i += BATCH_SIZE) {
+      const batch = files.slice(i, Math.min(i + BATCH_SIZE, files.length));
+
+      // Process batch with limited concurrency
+      const chunks: string[][] = [];
+      for (let j = 0; j < batch.length; j += CONCURRENCY) {
+        chunks.push(batch.slice(j, Math.min(j + CONCURRENCY, batch.length)));
+      }
+
+      for (const chunk of chunks) {
+        await Promise.all(chunk.map(file => this.indexFile(file)));
+        processed += chunk.length;
+
+        // Report progress every 2 seconds
+        const now = Date.now();
+        if (now - lastReportTime > 2000) {
+          const percent = ((processed / files.length) * 100).toFixed(1);
+          console.error(`📊 Progress: ${processed}/${files.length} files (${percent}%) - ${this.getTotalSymbols()} symbols found`);
+          lastReportTime = now;
+        }
+      }
+    }
+  }
+
   private async loadIgnorePatterns(): Promise<void> {
     const gitignorePath = path.join(this.rootPath, '.gitignore');
 
-    // Default patterns
+    // Comprehensive default patterns covering all major ecosystems
     this.ignorePatterns = [
-      'node_modules',
+      // Version control
       '.git',
-      'dist',
-      'build',
-      'coverage',
-      '.next',
-      '.nuxt',
-      'out',
-      '.cache',
-      '*.min.js',
-      '*.map',
+      '.svn',
+      '.hg',
+
+      // Node.js
+      'node_modules',
       'package-lock.json',
       'yarn.lock',
       'pnpm-lock.yaml',
+      '.pnpm-store',
+
+      // Build outputs
+      'dist',
+      'build',
+      'out',
+      'target', // Java/Rust
+      '.next',
+      '.nuxt',
+      '.output',
+      '.vercel',
+
+      // .NET
+      'bin',
+      'obj',
+      'packages',
+      '*.nupkg',
+      '.vs',
+      '.vscode',
+      '*.suo',
+      '*.user',
+      '*.sln.docstates',
+      '[Dd]ebug',
+      '[Rr]elease',
+      'x64',
+      'x86',
+      '[Bb]in',
+      '[Oo]bj',
+      'TestResults',
+      '*.dbmdl',
+      '*.jfm',
+      '_ReSharper*',
+      '*.[Rr]e[Ss]harper',
+      '*.DotSettings.user',
+
+      // Python
+      '__pycache__',
+      '*.pyc',
+      '*.pyo',
+      '*.egg-info',
+      '.pytest_cache',
+      '.mypy_cache',
+      '.tox',
+      'venv',
+      '.venv',
+      'env',
+      '.env',
+      'virtualenv',
+
+      // Java
+      '*.class',
+      '*.jar',
+      '*.war',
+      '*.ear',
+
+      // Ruby
+      'vendor/bundle',
+      '.bundle',
+
+      // Go
+      'vendor',
+
+      // Rust
+      'Cargo.lock',
+
+      // PHP
+      'vendor',
+      'composer.lock',
+
+      // Coverage
+      'coverage',
+      '.nyc_output',
+      '*.lcov',
+
+      // Cache directories
+      '.cache',
+      '.parcel-cache',
+      '.turbo',
+
+      // IDE
+      '.idea',
+      '*.swp',
+      '*.swo',
+      '*~',
+
+      // OS
+      '.DS_Store',
+      'Thumbs.db',
+      'desktop.ini',
+
+      // Minified/generated
+      '*.min.js',
+      '*.min.css',
+      '*.map',
+      '*.bundle.js',
+
+      // Logs
+      '*.log',
+      'logs',
+      'npm-debug.log*',
+      'yarn-debug.log*',
+      'yarn-error.log*',
     ];
 
     try {
@@ -136,40 +303,27 @@ export class RepositoryIndexer {
     return false;
   }
 
-  private async indexDirectory(dirPath: string): Promise<void> {
-    try {
-      const entries = await fs.readdir(dirPath, { withFileTypes: true });
-
-      for (const entry of entries) {
-        const fullPath = path.join(dirPath, entry.name);
-        const relativePath = path.relative(this.rootPath, fullPath);
-
-        if (this.shouldIgnore(relativePath)) {
-          continue;
-        }
-
-        if (entry.isDirectory()) {
-          await this.indexDirectory(fullPath);
-        } else if (entry.isFile()) {
-          await this.indexFile(fullPath);
-        }
-      }
-    } catch (error) {
-      console.error(`Error indexing directory ${dirPath}:`, error);
-    }
-  }
 
   private async indexFile(filePath: string): Promise<void> {
     const ext = path.extname(filePath);
     const supportedExtensions = [
-      '.js', '.ts', '.jsx', '.tsx',  // JavaScript/TypeScript
-      '.py',                          // Python
-      '.go',                          // Go
-      '.rs',                          // Rust
-      '.java',                        // Java
+      '.js', '.ts', '.jsx', '.tsx', '.mjs', '.cjs',  // JavaScript/TypeScript
+      '.py', '.pyw',                      // Python
+      '.go',                              // Go
+      '.rs',                              // Rust
+      '.java',                            // Java
       '.c', '.cpp', '.cc', '.cxx', '.h', '.hpp', '.hxx',  // C/C++
-      '.cs',                          // C#
-      '.lua', '.luau'                 // Lua
+      '.cs',                              // C#
+      '.lua', '.luau',                    // Lua
+      '.rb', '.rake',                     // Ruby
+      '.php',                             // PHP
+      '.swift',                           // Swift
+      '.kt', '.kts',                      // Kotlin
+      '.scala', '.sc',                    // Scala
+      '.ex', '.exs',                      // Elixir
+      '.dart',                            // Dart
+      '.vim',                             // VimScript
+      '.sh', '.bash', '.zsh',             // Shell
     ];
 
     if (!supportedExtensions.includes(ext)) {
@@ -177,52 +331,93 @@ export class RepositoryIndexer {
     }
 
     try {
-      const content = await fs.readFile(filePath, 'utf-8');
-      const stats = await fs.stat(filePath);
-      const lines = content.split('\n');
-      const language = this.detectLanguage(ext);
+      // Add timeout for file processing (5 seconds per file)
+      const timeoutPromise = new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error('File processing timeout')), 5000)
+      );
 
-      const fileIndex: FileIndex = {
-        path: path.relative(this.rootPath, filePath),
-        symbols: [],
-        imports: [],
-        exports: [],
-        size: stats.size,
-        lines: lines.length,
-        language,
-        content: content,
-      };
-
-      // Parse file based on language
-      if (language === 'typescript' || language === 'javascript') {
-        this.parseJavaScriptTypeScript(content, lines, fileIndex);
-      } else if (language === 'python') {
-        this.parsePython(content, lines, fileIndex);
-      } else if (language === 'go') {
-        this.parseGo(content, lines, fileIndex);
-      } else if (language === 'c' || language === 'cpp') {
-        this.parseCpp(content, lines, fileIndex);
-      } else if (language === 'csharp') {
-        this.parseCSharp(content, lines, fileIndex);
-      } else if (language === 'lua') {
-        this.parseLua(content, lines, fileIndex);
-      } else if (language === 'rust') {
-        this.parseRust(content, lines, fileIndex);
-      } else if (language === 'java') {
-        this.parseJava(content, lines, fileIndex);
-      }
-
-      this.index.set(fileIndex.path, fileIndex);
-
-      // Update symbol map
-      for (const symbol of fileIndex.symbols) {
-        if (!this.symbolMap.has(symbol.name)) {
-          this.symbolMap.set(symbol.name, []);
-        }
-        this.symbolMap.get(symbol.name)!.push(symbol);
-      }
+      await Promise.race([
+        this.indexFileInternal(filePath),
+        timeoutPromise
+      ]);
     } catch (error) {
-      console.error(`Error indexing file ${filePath}:`, error);
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      if (errorMsg.includes('timeout')) {
+        console.error(`⏱️  Timeout indexing file: ${filePath}`);
+      }
+      // Silently skip other errors (binary files, encoding issues, etc.)
+    }
+  }
+
+  private async indexFileInternal(filePath: string): Promise<void> {
+    const ext = path.extname(filePath);
+    const stats = await fs.stat(filePath);
+
+    // Skip files larger than 5MB (likely generated/minified)
+    const MAX_FILE_SIZE = 5 * 1024 * 1024;
+    if (stats.size > MAX_FILE_SIZE) {
+      return;
+    }
+
+    const content = await fs.readFile(filePath, 'utf-8');
+    const lines = content.split('\n');
+    const language = this.detectLanguage(ext);
+
+    const fileIndex: FileIndex = {
+      path: path.relative(this.rootPath, filePath),
+      symbols: [],
+      imports: [],
+      exports: [],
+      size: stats.size,
+      lines: lines.length,
+      language,
+      // Only store content for text search - can be disabled for memory optimization
+      content: stats.size < 1024 * 1024 ? content : undefined, // Only cache files < 1MB
+    };
+
+    // Parse file based on language
+    if (language === 'typescript' || language === 'javascript') {
+      this.parseJavaScriptTypeScript(content, lines, fileIndex);
+    } else if (language === 'python') {
+      this.parsePython(content, lines, fileIndex);
+    } else if (language === 'go') {
+      this.parseGo(content, lines, fileIndex);
+    } else if (language === 'c' || language === 'cpp') {
+      this.parseCpp(content, lines, fileIndex);
+    } else if (language === 'csharp') {
+      this.parseCSharp(content, lines, fileIndex);
+    } else if (language === 'lua') {
+      this.parseLua(content, lines, fileIndex);
+    } else if (language === 'rust') {
+      this.parseRust(content, lines, fileIndex);
+    } else if (language === 'java') {
+      this.parseJava(content, lines, fileIndex);
+    } else if (language === 'ruby') {
+      this.parseRuby(content, lines, fileIndex);
+    } else if (language === 'php') {
+      this.parsePhp(content, lines, fileIndex);
+    } else if (language === 'swift') {
+      this.parseSwift(content, lines, fileIndex);
+    } else if (language === 'kotlin') {
+      this.parseKotlin(content, lines, fileIndex);
+    } else if (language === 'scala') {
+      this.parseScala(content, lines, fileIndex);
+    } else if (language === 'elixir') {
+      this.parseElixir(content, lines, fileIndex);
+    } else if (language === 'dart') {
+      this.parseDart(content, lines, fileIndex);
+    } else if (language === 'shell') {
+      this.parseShell(content, lines, fileIndex);
+    }
+
+    this.index.set(fileIndex.path, fileIndex);
+
+    // Update symbol map
+    for (const symbol of fileIndex.symbols) {
+      if (!this.symbolMap.has(symbol.name)) {
+        this.symbolMap.set(symbol.name, []);
+      }
+      this.symbolMap.get(symbol.name)!.push(symbol);
     }
   }
 
@@ -232,7 +427,10 @@ export class RepositoryIndexer {
       '.tsx': 'typescript',
       '.js': 'javascript',
       '.jsx': 'javascript',
+      '.mjs': 'javascript',
+      '.cjs': 'javascript',
       '.py': 'python',
+      '.pyw': 'python',
       '.go': 'go',
       '.rs': 'rust',
       '.java': 'java',
@@ -246,6 +444,21 @@ export class RepositoryIndexer {
       '.cs': 'csharp',
       '.lua': 'lua',
       '.luau': 'lua',
+      '.rb': 'ruby',
+      '.rake': 'ruby',
+      '.php': 'php',
+      '.swift': 'swift',
+      '.kt': 'kotlin',
+      '.kts': 'kotlin',
+      '.scala': 'scala',
+      '.sc': 'scala',
+      '.ex': 'elixir',
+      '.exs': 'elixir',
+      '.dart': 'dart',
+      '.vim': 'vim',
+      '.sh': 'shell',
+      '.bash': 'shell',
+      '.zsh': 'shell',
     };
     return map[ext] || 'unknown';
   }
@@ -762,6 +975,394 @@ export class RepositoryIndexer {
         signature: match[0],
       });
     }
+  }
+
+  private parseRuby(content: string, lines: string[], fileIndex: FileIndex): void {
+    // Parse require/load statements
+    const requireRegex = /(?:require|load)\s+['"]([^'"]+)['"]/g;
+    let match;
+    while ((match = requireRegex.exec(content)) !== null) {
+      fileIndex.imports.push(match[1]);
+    }
+
+    // Parse methods and functions
+    const methodRegex = /(?:^|\n)\s*def\s+(?:self\.)?(\w+[?!]?)\s*(?:\(([^)]*)\))?/gm;
+    while ((match = methodRegex.exec(content)) !== null) {
+      const line = this.getLineNumber(content, match.index);
+      const endLine = this.findRubyBlockEnd(lines, line);
+      const code = lines.slice(line - 1, endLine).join('\n');
+
+      fileIndex.symbols.push({
+        name: match[1],
+        type: 'function',
+        filePath: fileIndex.path,
+        line,
+        endLine,
+        code,
+        signature: match[0].trim(),
+      });
+    }
+
+    // Parse classes and modules
+    const classRegex = /(?:^|\n)\s*(class|module)\s+(\w+)(?:\s*<\s*\w+)?/gm;
+    while ((match = classRegex.exec(content)) !== null) {
+      const line = this.getLineNumber(content, match.index);
+      const endLine = this.findRubyBlockEnd(lines, line);
+      const code = lines.slice(line - 1, endLine).join('\n');
+
+      fileIndex.symbols.push({
+        name: match[2],
+        type: match[1] === 'module' ? 'type' : 'class',
+        filePath: fileIndex.path,
+        line,
+        endLine,
+        code,
+        signature: match[0].trim(),
+      });
+    }
+  }
+
+  private parsePhp(content: string, lines: string[], fileIndex: FileIndex): void {
+    // Parse use/require statements
+    const useRegex = /(?:use|require|include)\s+([^;]+);/g;
+    let match;
+    while ((match = useRegex.exec(content)) !== null) {
+      fileIndex.imports.push(match[1].trim());
+    }
+
+    // Parse functions
+    const functionRegex = /function\s+(\w+)\s*\([^)]*\)/g;
+    while ((match = functionRegex.exec(content)) !== null) {
+      const line = this.getLineNumber(content, match.index);
+      const endLine = this.findBlockEnd(lines, line);
+      const code = lines.slice(line - 1, endLine).join('\n');
+
+      fileIndex.symbols.push({
+        name: match[1],
+        type: 'function',
+        filePath: fileIndex.path,
+        line,
+        endLine,
+        code,
+        signature: match[0],
+      });
+    }
+
+    // Parse classes
+    const classRegex = /class\s+(\w+)(?:\s+extends\s+\w+)?(?:\s+implements\s+[\w,\s]+)?/g;
+    while ((match = classRegex.exec(content)) !== null) {
+      const line = this.getLineNumber(content, match.index);
+      const endLine = this.findBlockEnd(lines, line);
+      const code = lines.slice(line - 1, endLine).join('\n');
+
+      fileIndex.symbols.push({
+        name: match[1],
+        type: 'class',
+        filePath: fileIndex.path,
+        line,
+        endLine,
+        code,
+        signature: match[0],
+      });
+    }
+  }
+
+  private parseSwift(content: string, lines: string[], fileIndex: FileIndex): void {
+    // Parse imports
+    const importRegex = /import\s+([^\n]+)/g;
+    let match;
+    while ((match = importRegex.exec(content)) !== null) {
+      fileIndex.imports.push(match[1].trim());
+    }
+
+    // Parse functions
+    const functionRegex = /(?:public|private|internal)?\s*(?:static\s+)?func\s+(\w+)\s*(?:<[^>]+>)?\s*\([^)]*\)/g;
+    while ((match = functionRegex.exec(content)) !== null) {
+      const line = this.getLineNumber(content, match.index);
+      const endLine = this.findBlockEnd(lines, line);
+      const code = lines.slice(line - 1, endLine).join('\n');
+
+      fileIndex.symbols.push({
+        name: match[1],
+        type: 'function',
+        filePath: fileIndex.path,
+        line,
+        endLine,
+        code,
+        signature: match[0],
+      });
+    }
+
+    // Parse classes, structs, protocols
+    const typeRegex = /(?:public|private|internal)?\s*(class|struct|protocol|enum)\s+(\w+)(?:<[^>]+>)?/g;
+    while ((match = typeRegex.exec(content)) !== null) {
+      const line = this.getLineNumber(content, match.index);
+      const endLine = this.findBlockEnd(lines, line);
+      const code = lines.slice(line - 1, endLine).join('\n');
+
+      fileIndex.symbols.push({
+        name: match[2],
+        type: match[1] === 'protocol' ? 'interface' : 'class',
+        filePath: fileIndex.path,
+        line,
+        endLine,
+        code,
+        signature: match[0],
+      });
+    }
+  }
+
+  private parseKotlin(content: string, lines: string[], fileIndex: FileIndex): void {
+    // Parse imports
+    const importRegex = /import\s+([^\n]+)/g;
+    let match;
+    while ((match = importRegex.exec(content)) !== null) {
+      fileIndex.imports.push(match[1].trim());
+    }
+
+    // Parse functions
+    const functionRegex = /(?:public|private|internal|protected)?\s*(?:suspend\s+)?fun\s+(\w+)\s*(?:<[^>]+>)?\s*\([^)]*\)/g;
+    while ((match = functionRegex.exec(content)) !== null) {
+      const line = this.getLineNumber(content, match.index);
+      const endLine = this.findBlockEnd(lines, line);
+      const code = lines.slice(line - 1, endLine).join('\n');
+
+      fileIndex.symbols.push({
+        name: match[1],
+        type: 'function',
+        filePath: fileIndex.path,
+        line,
+        endLine,
+        code,
+        signature: match[0],
+      });
+    }
+
+    // Parse classes, interfaces, objects
+    const typeRegex = /(?:public|private|internal|protected)?\s*(?:data\s+|sealed\s+|abstract\s+)?(class|interface|object)\s+(\w+)(?:<[^>]+>)?/g;
+    while ((match = typeRegex.exec(content)) !== null) {
+      const line = this.getLineNumber(content, match.index);
+      const endLine = this.findBlockEnd(lines, line);
+      const code = lines.slice(line - 1, endLine).join('\n');
+
+      fileIndex.symbols.push({
+        name: match[2],
+        type: match[1] === 'interface' ? 'interface' : 'class',
+        filePath: fileIndex.path,
+        line,
+        endLine,
+        code,
+        signature: match[0],
+      });
+    }
+  }
+
+  private parseScala(content: string, lines: string[], fileIndex: FileIndex): void {
+    // Parse imports
+    const importRegex = /import\s+([^\n]+)/g;
+    let match;
+    while ((match = importRegex.exec(content)) !== null) {
+      fileIndex.imports.push(match[1].trim());
+    }
+
+    // Parse defs
+    const defRegex = /def\s+(\w+)\s*(?:\[[^\]]+\])?\s*\([^)]*\)/g;
+    while ((match = defRegex.exec(content)) !== null) {
+      const line = this.getLineNumber(content, match.index);
+      const endLine = this.findBlockEnd(lines, line);
+      const code = lines.slice(line - 1, endLine).join('\n');
+
+      fileIndex.symbols.push({
+        name: match[1],
+        type: 'function',
+        filePath: fileIndex.path,
+        line,
+        endLine,
+        code,
+        signature: match[0],
+      });
+    }
+
+    // Parse classes, objects, traits
+    const typeRegex = /(class|object|trait)\s+(\w+)(?:\[[^\]]+\])?/g;
+    while ((match = typeRegex.exec(content)) !== null) {
+      const line = this.getLineNumber(content, match.index);
+      const endLine = this.findBlockEnd(lines, line);
+      const code = lines.slice(line - 1, endLine).join('\n');
+
+      fileIndex.symbols.push({
+        name: match[2],
+        type: match[1] === 'trait' ? 'interface' : 'class',
+        filePath: fileIndex.path,
+        line,
+        endLine,
+        code,
+        signature: match[0],
+      });
+    }
+  }
+
+  private parseElixir(content: string, lines: string[], fileIndex: FileIndex): void {
+    // Parse imports/aliases
+    const importRegex = /(?:import|alias|use)\s+([^\n,]+)/g;
+    let match;
+    while ((match = importRegex.exec(content)) !== null) {
+      fileIndex.imports.push(match[1].trim());
+    }
+
+    // Parse functions
+    const functionRegex = /def(?:p)?\s+(\w+)(?:\([^)]*\))?/g;
+    while ((match = functionRegex.exec(content)) !== null) {
+      const line = this.getLineNumber(content, match.index);
+      const endLine = this.findElixirBlockEnd(lines, line);
+      const code = lines.slice(line - 1, endLine).join('\n');
+
+      fileIndex.symbols.push({
+        name: match[1],
+        type: 'function',
+        filePath: fileIndex.path,
+        line,
+        endLine,
+        code,
+        signature: match[0],
+      });
+    }
+
+    // Parse modules
+    const moduleRegex = /defmodule\s+([\w.]+)/g;
+    while ((match = moduleRegex.exec(content)) !== null) {
+      const line = this.getLineNumber(content, match.index);
+      const endLine = this.findElixirBlockEnd(lines, line);
+      const code = lines.slice(line - 1, endLine).join('\n');
+
+      fileIndex.symbols.push({
+        name: match[1],
+        type: 'class',
+        filePath: fileIndex.path,
+        line,
+        endLine,
+        code,
+        signature: match[0],
+      });
+    }
+  }
+
+  private parseDart(content: string, lines: string[], fileIndex: FileIndex): void {
+    // Parse imports
+    const importRegex = /import\s+['"]([^'"]+)['"]/g;
+    let match;
+    while ((match = importRegex.exec(content)) !== null) {
+      fileIndex.imports.push(match[1]);
+    }
+
+    // Parse functions and methods
+    const functionRegex = /(?:Future<[^>]+>|[\w<>]+)\s+(\w+)\s*\([^)]*\)\s*(?:async\s*)?{/g;
+    while ((match = functionRegex.exec(content)) !== null) {
+      const line = this.getLineNumber(content, match.index);
+      const endLine = this.findBlockEnd(lines, line);
+      const code = lines.slice(line - 1, endLine).join('\n');
+
+      fileIndex.symbols.push({
+        name: match[1],
+        type: 'function',
+        filePath: fileIndex.path,
+        line,
+        endLine,
+        code,
+        signature: match[0].replace(/\s*{$/, ''),
+      });
+    }
+
+    // Parse classes
+    const classRegex = /(?:abstract\s+)?class\s+(\w+)(?:<[^>]+>)?(?:\s+extends\s+\w+)?(?:\s+implements\s+[\w,\s]+)?/g;
+    while ((match = classRegex.exec(content)) !== null) {
+      const line = this.getLineNumber(content, match.index);
+      const endLine = this.findBlockEnd(lines, line);
+      const code = lines.slice(line - 1, endLine).join('\n');
+
+      fileIndex.symbols.push({
+        name: match[1],
+        type: 'class',
+        filePath: fileIndex.path,
+        line,
+        endLine,
+        code,
+        signature: match[0],
+      });
+    }
+  }
+
+  private parseShell(content: string, lines: string[], fileIndex: FileIndex): void {
+    // Parse function definitions
+    const functionRegex = /(?:function\s+)?(\w+)\s*\(\)\s*{/g;
+    let match;
+    while ((match = functionRegex.exec(content)) !== null) {
+      const line = this.getLineNumber(content, match.index);
+      const endLine = this.findBlockEnd(lines, line);
+      const code = lines.slice(line - 1, endLine).join('\n');
+
+      fileIndex.symbols.push({
+        name: match[1],
+        type: 'function',
+        filePath: fileIndex.path,
+        line,
+        endLine,
+        code,
+        signature: match[0].replace(/\s*{$/, ''),
+      });
+    }
+
+    // Parse sourced files
+    const sourceRegex = /(?:source|\.)\\s+([^\n;]+)/g;
+    while ((match = sourceRegex.exec(content)) !== null) {
+      fileIndex.imports.push(match[1].trim());
+    }
+  }
+
+  private findRubyBlockEnd(lines: string[], startLine: number): number {
+    let depth = 1;
+
+    for (let i = startLine; i < lines.length; i++) {
+      const line = lines[i].trim();
+
+      // Count block starts (def, class, module, if, while, etc.)
+      if (/\b(?:def|class|module|if|unless|while|until|for|begin|case)\b/.test(line)) {
+        depth++;
+      }
+
+      // Count 'end' keywords
+      if (/\bend\b/.test(line)) {
+        depth--;
+        if (depth === 0) {
+          return i + 1;
+        }
+      }
+    }
+
+    return Math.min(startLine + 50, lines.length);
+  }
+
+  private findElixirBlockEnd(lines: string[], startLine: number): number {
+    let depth = 1;
+
+    for (let i = startLine; i < lines.length; i++) {
+      const line = lines[i].trim();
+
+      // Count 'do' keywords
+      if (/\bdo\b/.test(line)) {
+        depth++;
+      }
+
+      // Count 'end' keywords
+      if (/\bend\b/.test(line)) {
+        depth--;
+        if (depth === 0) {
+          return i + 1;
+        }
+      }
+    }
+
+    return Math.min(startLine + 50, lines.length);
   }
 
   private findLuaBlockEnd(lines: string[], startLine: number): number {

@@ -11,11 +11,16 @@ tsconfig.json
 *.swo
 CLAUDE.md
 CONTRIBUTING.md
+PERFORMANCE.md
+GITHUB-READY.md
 
 # Test files
 test/
 *.test.js
 *.test.ts
+test-*.mjs
+test-*.js
+cloned/
 coverage/
 .nyc_output/
 
